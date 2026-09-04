@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import type { JournalEntry, MoodType, WeeklyReviewResponse, WeeklyDailyCard } from '../types';
 import { formatDateKey } from './CalendarView';
+import { extractErrorMessage } from '../utils/errors';
 
 interface WeeklyReviewModalProps {
   isOpen: boolean;
@@ -183,14 +184,15 @@ export const WeeklyReviewModal: React.FC<WeeklyReviewModalProps> = ({
       });
 
       if (!res.ok) {
-        throw new Error(`Failed to generate review: ${res.statusText}`);
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(extractErrorMessage(errData, `Failed to generate review (${res.status})`));
       }
 
       const data: WeeklyReviewResponse = await res.json();
       setReviewData(data);
     } catch (err: any) {
       console.error('Error generating weekly review:', err);
-      setError(err?.message || 'Failed to synthesize this week with Gemini.');
+      setError(extractErrorMessage(err, 'Failed to synthesize this week with Gemini.'));
     } finally {
       setLoading(false);
     }

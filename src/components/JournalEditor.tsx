@@ -34,6 +34,7 @@ import type { JournalEntry, JournalTurn, ReflectionMode, MoodType, VisualDriverT
 import { AnimatedBackground } from './AnimatedBackground';
 import { SpotifyMusicCard } from './SpotifyMusicCard';
 import { ShareableCardModal } from './ShareableCardModal';
+import { extractErrorMessage } from '../utils/errors';
 
 interface JournalEditorProps {
   entry: JournalEntry;
@@ -549,10 +550,10 @@ export const JournalEditor: React.FC<JournalEditorProps> = ({
 
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
-        if (response.status === 429) {
-          throw new Error(errData.error || 'Please slow down: AI request rate limit reached. Please wait a moment.');
-        }
-        throw new Error(errData.error || `Server responded with status ${response.status}`);
+        const defaultMsg = response.status === 429
+          ? 'Please slow down: AI request rate limit reached. Please wait a moment.'
+          : `Server responded with status ${response.status}`;
+        throw new Error(extractErrorMessage(errData, defaultMsg));
       }
 
       const data = await response.json();
@@ -596,7 +597,7 @@ export const JournalEditor: React.FC<JournalEditorProps> = ({
       }
     } catch (err: any) {
       console.error('Error generating AI reflection:', err);
-      setGenerationError(err?.message || 'Failed to receive response from Gemini. Please try again.');
+      setGenerationError(extractErrorMessage(err, 'Failed to receive response from Gemini. Please try again.'));
     } finally {
       setIsGenerating(false);
     }

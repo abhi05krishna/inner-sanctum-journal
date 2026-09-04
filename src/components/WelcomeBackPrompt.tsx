@@ -26,36 +26,9 @@ export const WelcomeBackPrompt: React.FC<WelcomeBackPromptProps> = ({
     return formatDateKey(d);
   }, []);
 
-  // Check if session storage already dismissed today's prompt
-  useEffect(() => {
-    try {
-      const dismissedToday = sessionStorage.getItem(`welcome_back_dismissed_${todayStr}`);
-      if (dismissedToday === 'true') {
-        setIsDismissed(true);
-      }
-    } catch (e) {
-      console.warn('Session storage read error:', e);
-    }
-  }, [todayStr]);
-
-  // Determine if criteria is met:
-  // 1. Last recorded entry was EXACTLY yesterday
-  // 2. User has NOT yet written anything today
-  // 3. Not lapsed (> 1 day) to avoid guilt-tripping
-  const shouldShow = useMemo(() => {
-    if (isDismissed) return false;
-
-    // Check if today already has meaningful content
+  // Calculate streak info for contextual display
+  const hasYesterdayEntry = useMemo(() => {
     const todayEntry = entries.find((e) => !e.isDeleted && (e.date === todayStr || e.id === todayStr));
-    const hasTodayContent =
-      todayEntry &&
-      ((todayEntry.turns && todayEntry.turns.length > 0) ||
-        (todayEntry.title && todayEntry.title.trim() !== '' && todayEntry.title !== 'Untitled Reflection') ||
-        Boolean(todayEntry.summary));
-
-    if (hasTodayContent) return false;
-
-    // Filter recorded entries with content
     const entriesWithContent = entries
       .filter((e) => !e.isDeleted)
       .filter(
@@ -66,25 +39,19 @@ export const WelcomeBackPrompt: React.FC<WelcomeBackPromptProps> = ({
       )
       .sort((a, b) => (b.date || b.id).localeCompare(a.date || a.id));
 
-    // Find the latest recorded entry before today
     const previousEntries = entriesWithContent.filter((e) => (e.date || e.id) !== todayStr);
     if (previousEntries.length === 0) return false;
-
     const latestRecordedDate = previousEntries[0].date || previousEntries[0].id;
-
-    // Exactly yesterday
     return latestRecordedDate === yesterdayStr;
-  }, [entries, todayStr, yesterdayStr, isDismissed]);
+  }, [entries, todayStr, yesterdayStr]);
+
+  // Display every time the app loads, unless dismissed for this session/visit
+  const shouldShow = !isDismissed;
 
   const handleDismiss = () => {
     setIsDismissed(true);
     if (timerRef.current) clearTimeout(timerRef.current);
     if (intervalRef.current) clearInterval(intervalRef.current);
-    try {
-      sessionStorage.setItem(`welcome_back_dismissed_${todayStr}`, 'true');
-    } catch (e) {
-      console.warn('Session storage write error:', e);
-    }
   };
 
   const handleAccept = () => {
@@ -153,8 +120,17 @@ export const WelcomeBackPrompt: React.FC<WelcomeBackPromptProps> = ({
 
         {/* Warm Greeting Badge */}
         <div className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-[#F5E7C6] px-3 py-1 text-xs font-bold text-[#994500] border border-[#DFCBA0]">
-          <Flame className="h-3.5 w-3.5 text-[#FA8112]" />
-          <span>Consistent Reflection Streak</span>
+          {hasYesterdayEntry ? (
+            <>
+              <Flame className="h-3.5 w-3.5 text-[#FA8112]" />
+              <span>Consistent Reflection Streak</span>
+            </>
+          ) : (
+            <>
+              <Sparkles className="h-3.5 w-3.5 text-[#FA8112]" />
+              <span>Daily Reflection Sanctuary</span>
+            </>
+          )}
         </div>
 
         {/* Personalized Heading */}
@@ -164,7 +140,9 @@ export const WelcomeBackPrompt: React.FC<WelcomeBackPromptProps> = ({
 
         {/* Friendly Invitation */}
         <p className="mt-3 text-sm text-[#333333] font-serif leading-relaxed">
-          You reflected yesterday — take a quiet, mindful moment to capture your thoughts, dilemmas, and creative sparks for today.
+          {hasYesterdayEntry
+            ? 'You reflected yesterday — take a quiet, mindful moment to capture your thoughts, dilemmas, and creative sparks for today.'
+            : 'Welcome back to your mindful sanctuary. Take a peaceful pause to capture your reflections, thoughts, and insights today.'}
         </p>
 
         {/* Action Buttons */}

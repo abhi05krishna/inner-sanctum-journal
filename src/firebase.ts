@@ -147,10 +147,9 @@ export function subscribeToUserEntries(
   }
 
   const entriesRef = collection(db, 'users', userId, 'entries');
-  const q = query(entriesRef, orderBy('date', 'desc'));
 
   return onSnapshot(
-    q,
+    entriesRef,
     (snapshot) => {
       const entries: JournalEntry[] = [];
       snapshot.forEach((docSnap) => {
@@ -177,6 +176,8 @@ export function subscribeToUserEntries(
           deletedAt: data.deletedAt || null
         });
       });
+      // Sort by date/id descending in memory so entries lacking a date field are never dropped
+      entries.sort((a, b) => (b.date || b.id).localeCompare(a.date || a.id));
       onData(entries);
     },
     (err) => {
@@ -260,6 +261,19 @@ export async function fetchJournalEntry(userId: string, dateStr: string): Promis
     const snap = await getDoc(docRef);
     if (!snap.exists()) return null;
     const data = snap.data();
+    let turns = Array.isArray(data.turns) ? data.turns : [];
+    if (turns.length === 0) {
+      try {
+        const messagesRef = collection(db, 'users', userId, 'entries', dateStr, 'messages');
+        const mSnap = await getDocs(query(messagesRef, orderBy('timestamp', 'asc')));
+        if (!mSnap.empty) {
+          turns = mSnap.docs.map((d) => d.data() as JournalTurn);
+        }
+      } catch {
+        // Non-blocking subcollection query fallback
+      }
+    }
+
     return {
       id: snap.id,
       date: data.date || snap.id,
@@ -275,7 +289,7 @@ export async function fetchJournalEntry(userId: string, dateStr: string): Promis
       summary: data.summary,
       takeaways: Array.isArray(data.takeaways) ? data.takeaways : [],
       actionItems: Array.isArray(data.actionItems) ? data.actionItems : [],
-      turns: Array.isArray(data.turns) ? data.turns : [],
+      turns,
       embedding: Array.isArray(data.embedding) ? data.embedding : undefined,
       isDeleted: data.isDeleted === true,
       deletedAt: data.deletedAt || null,
@@ -900,9 +914,8 @@ export async function updateOrgMemberLastActiveDate(
       },
       { merge: true }
     );
-  } catch (err) {
-    // Non-critical background telemetry update
-    console.debug('Could not update org member last active date:', err);
+  } catch {
+    // Non-critical background telemetry update - silent fallback
   }
 }
 

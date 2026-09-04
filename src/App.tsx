@@ -70,7 +70,6 @@ export default function App() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [isOnboardingManual, setIsOnboardingManual] = useState(false);
-  const [hasCheckedOnboarding, setHasCheckedOnboarding] = useState(false);
 
   // Organization state (Zero Content Visibility)
   const [currentOrgId, setCurrentOrgId] = useState<string | null>(null);
@@ -130,12 +129,14 @@ export default function App() {
           photoURL: user.photoURL,
           lastLoginAt: new Date().toISOString(),
         });
+        // Walkthrough appears every time the user logs in; fully skippable/dismissible
+        setIsOnboardingManual(false);
+        setIsOnboardingOpen(true);
       } else {
         setCurrentUser(null);
         setEntries([]);
         setSelectedEntryId(null);
         setCurrentView('calendar');
-        setHasCheckedOnboarding(false);
         setIsOnboardingOpen(false);
       }
       setAuthLoading(false);
@@ -187,16 +188,6 @@ export default function App() {
         const cached = localStorage.getItem(`org_${currentUser.uid}`);
         if (cached) {
           setCurrentOrgId(cached);
-        }
-      }
-
-      // Check onboarding walkthrough state for first-time login
-      if (!hasCheckedOnboarding) {
-        setHasCheckedOnboarding(true);
-        const localSeen = localStorage.getItem(`inner_sanctum_onboarded_${currentUser.uid}`);
-        if (data?.hasSeenOnboarding !== true && localSeen !== 'true') {
-          setIsOnboardingManual(false);
-          setIsOnboardingOpen(true);
         }
       }
     });
@@ -317,16 +308,10 @@ export default function App() {
     handleSelectDate(todayKey);
   };
 
-  // Close or dismiss onboarding walkthrough
+  // Close or dismiss onboarding walkthrough (remains fully skippable/dismissible)
   const handleCloseOnboarding = useCallback(() => {
     setIsOnboardingOpen(false);
-    if (currentUser?.uid) {
-      localStorage.setItem(`inner_sanctum_onboarded_${currentUser.uid}`, 'true');
-      setUserHasSeenOnboarding(currentUser.uid, true).catch((err) => {
-        console.warn('Failed to persist onboarding completion:', err);
-      });
-    }
-  }, [currentUser?.uid]);
+  }, []);
 
   // Start today's reflection directly from onboarding tour CTA
   const handleStartTodayFromOnboarding = useCallback(() => {

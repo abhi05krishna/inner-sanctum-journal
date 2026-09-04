@@ -1,59 +1,92 @@
-# Gemini Journal & Reflections
+# Gemini Journal & Reflections: Inner Sanctum
 
-A production-grade, privacy-first personal reflection and multi-turn Socratic journaling web application powered by **Google Gemini 3.6 Flash**, **Firebase Authentication (Google Sign-In)**, and **Cloud Firestore**, designed for secure deployment on **Google Cloud Run**.
+A production-grade, privacy-first personal reflection sanctuary and multi-turn Socratic journaling web application powered by **Google Gemini 3.6 Flash**, **Firebase Authentication (Google Sign-In)**, and **Cloud Firestore**, engineered for high-availability deployment on **Google Cloud Run**.
 
 ---
 
 ## 📋 Table of Contents
-1. [Architecture & Unique Features](#-architecture--unique-features-built-beyond-base-spec)
+1. [Architecture & Unique Features Built Beyond Base Spec](#-architecture--unique-features-built-beyond-base-spec)
 2. [Prerequisites & Environment Setup](#-prerequisites--environment-setup)
 3. [Secret Management with Google Cloud Secret Manager](#-secret-management-with-google-cloud-secret-manager)
 4. [Spotify Developer Application Setup](#-spotify-developer-application-setup)
 5. [Cloud Firestore Security Rules](#-cloud-firestore-security-rules)
 6. [Cloud Run Deployment & Verification Label](#-cloud-run-deployment--verification-label)
 7. [Security & Robustness Hardening Standards](#-security--robustness-hardening-standards)
-8. [Local Development](#-local-development)
+8. [Local Development & Testing](#-local-development--testing)
 
 ---
 
 ## 🌟 Architecture & Unique Features (Built Beyond Base Spec)
 
-This platform elevates digital journaling from a simple static text box into an intelligent, ambient, and mathematically grounded reflective companion:
+Inner Sanctum transforms digital journaling from a static text repository into an ambient, emotionally grounded, and cognitively supportive reflection partner:
 
-- 📅 **Calendar-First Navigation Data Model**:
-  Strict adherence to a date-keyed hierarchy (`users/{userId}/entries/{YYYY-MM-DD}`). Multi-turn reflective dialogues live in an isolated subcollection (`messages/{messageId}`) under that calendar day. Every date is accessible via an interactive month-grid calendar with entry status dots, mood badges, and prompt triggers.
-- 🌤️ **Agentic Mood & Weather Ambient Theming**:
-  Reflections adapt visually to the author's emotional state and environment. As Gemini evaluates entry sentiment and mood, the UI subtly adjusts between curated themes (*Serene Sage, Warm Solstice, Deep Twilight, Mist Grey*), paired with ambient local weather conditions retrieved via secure server-side weather proxies.
-- 🔍 **Semantic Search with Native Firestore Vector Search**:
-  Features vector embedding search powered by `text-embedding-004`. Journal entries and reflection transcripts are vectorized into dense embeddings, stored directly in Firestore, and indexed for semantic similarity queries (e.g., searching *"moments of creative flow"* surfaces matching entries even if exact keywords never appear).
-- 🎵 **Agentic Spotify Suggestions via Native Function Calling**:
-  Music suggestions are **not** hardcoded JSON tags or regex hacks. Gemini autonomously invokes a registered tool (`suggest_music`) via native function declarations when it detects an emotional pivot or reflective juncture, recommending mood-tailored Spotify tracks and playlists.
-- 🏢 **Zero-Content-Visibility Enterprise & Organization Model**:
-  Supports corporate/team seat management (`organizations/{orgId}/members/{userId}`) while cryptographically and structurally guaranteeing **zero employer visibility** into personal entries, mood data, or reflections. Admins can invite, provision, and revoke seats, but Firestore rules strictly forbid any organization role from reading `users/{userId}/entries/*`.
-- 🗂️ **Weekly Reflection Flashcards & Executive Synthesis**:
-  Generates multi-perspective weekly flashcards summarizing themes, emotional milestones, key lessons, and suggested focus areas across 7-day calendar arcs.
-- 🌌 **Reflection Universe Interactive Constellation**:
-  Visualizes reflections as an interactive cosmic constellation canvas. Each entry is plotted based on semantic similarity and emotional resonance, allowing users to orbit, pan, search, and click stars to reopen historical dialogues.
-- 🧠 **RAG-Enhanced Longitudinal Reflections**:
-  Leverages Retrieval-Augmented Generation to ground ongoing dialogues in historical context. When reflecting on current struggles or aspirations, Gemini draws upon semantic parallels from prior months to offer perspective on personal growth.
-- 🎙️ **Voice Input**:
-  Seamless Web Speech API integration with live interim transcription, enabling hands-free reflective dictation.
-- 📇 **Shareable Reflection Cards**:
-  Allows users to export beautifully formatted, styled reflection quote cards suitable for saving or sharing, while keeping the full journal private.
-- 🛡️ **Robustness & Defense-in-Depth Hardening**:
-  Fail-fast server startup secret validation, uniform input length limits (server & client), resilient 4-stage model fallback ladder (`3.6-flash` → `3.1-flash-lite` → `flash-latest` → `3.7-flash`), top-level and section-level React Error Boundaries, and immutable organization admin audit logging.
+### 1. Calendar-First Navigation Data Model
+- **Strict Date-Keyed Hierarchy**: Stored at `users/{userId}/entries/{YYYY-MM-DD}`, maintaining one authoritative document per calendar day per user. Multi-turn reflective dialogues live in an isolated subcollection (`messages/{messageId}`) under that calendar day.
+- **Interactive Calendar Grid**: Full monthly navigation with clean visual hierarchy, today highlighting, and quick-reflection launch actions.
+- **Glitch-Free Entry Indicators**: Calendar cells calculate `hasSavedContent` using strict content verification (valid turns, custom title, summary, or mood reason) rather than empty draft instances. Blank dates show zero false indicators or phantom metadata bars.
+- **Direct Per-Date Deletion**: Each calendar day cell and archive card features a direct delete action with confirmation modal, safely moving entries to Recently Deleted without leaving the calendar view.
+
+### 2. Two-Stage Soft-Delete & 15-Day Trash Recovery
+- **Accidental Deletion Protection**: Deleting an entry sets `isDeleted: true` and records a timestamp (`deletedAt: ISOString`).
+- **Dedicated Trash Archive**: The slide-out Navigation Drawer features a **Recently Deleted** folder listing deleted entries, countdowns for remaining recovery days (15-day window), and one-click **Restore** or **Permanently Delete** capabilities.
+- **Calendar & Search Exclusion**: Soft-deleted entries are immediately excluded from active calendar statistics, monthly archive cards, streaks, and semantic search results.
+
+### 3. In-Card Reflection Pagination
+- **Multi-Turn Excerpt Chunking**: In the **Monthly Archive & Search** view, extensive reflections, summaries, key takeaways, and action items are automatically divided into bite-sized pages.
+- **Self-Contained Controls**: Each archive card provides independent `[Page X of Y]` pagination with previous and next arrow buttons. Click events use strict stop-propagation so browsing card pages does not trigger parent date selection.
+
+### 4. Interactive App Tour (Every Login)
+- **12-Step Guided Walkthrough**: Welcomes users upon authentication and explains core sanctuary features, including reflection modes, mood tracking, weather atmosphere, Spotify pairing, and organization privacy.
+- **Every Login Activation**: Displays every time the user logs in or re-authenticates to ensure continuous feature discoverability.
+- **Zero-Friction Dismissal**: Fully skippable at any step via `Escape`, the close button (`✕`), or "Skip Tour". Dismissing hides the walkthrough for the remainder of the session.
+- **On-Demand Drawer Trigger**: Accessible at any time via the **Interactive Walkthrough** button in the slide-out navigation drawer.
+
+### 5. Personalized Welcome Back Prompt (Every Login)
+- **Streak & Continuity Awareness**: Appears on every app load, recognizing whether the user reflected yesterday to celebrate active streaks or gently invite a fresh reflection for today.
+- **4.5-Second Auto-Dismiss Progress Bar**: Features a subtle progress bar at the base of the modal that smoothly elapses over 4.5 seconds before auto-closing, or can be dismissed immediately via "Maybe later".
+- **One-Click Reflect Action**: Clicking **"Reflect Today"** immediately opens today's reflection canvas.
+
+### 6. Agentic Spotify Integration via Native Function Calling
+- **True Agentic Tool Calling**: Gemini detects emotional shifts or reflective milestones and autonomously invokes the registered `suggest_music` tool using native function declarations (`FunctionDeclaration`). Music is never parsed from raw string patterns or simulated JSON flags.
+- **Spotify Web API Proxy**: Secure server-side proxy handles client credentials and OAuth user tokens to query tracks and playlists.
+- **Interactive Playback Preview & Web Embeds**: Music cards display album art, artist credits, genre/mood reasoning, open-in-Spotify buttons, and embedded 30-second audio previews or Spotify web player widgets.
+
+### 7. Dual Ambient Visual Drivers & Live Weather Integration
+- **Video & Canvas Atmosphere Modes**: Users can switch seamlessly between rich looping ambient nature backgrounds (sunlit forest, gentle rain, starry twilight, autumn dusk) and interactive procedural HTML5 canvas particle engines.
+- **Open-Meteo Weather Proxy**: Server-side proxy fetches local atmospheric conditions (clear, rain, overcast, storm, snow) based on coordinates or city name, dynamically adapting the editor's visual tone without exposing client IPs.
+
+### 8. Native Semantic Vector Search
+- **Embedding Generation**: Reflective dialogues and synthesized summaries are vectorized via `text-embedding-004` into dense vector embeddings stored directly in Firestore.
+- **Cosine Similarity Ranking**: Search input is embedded on the server and compared against user entries, surfacing conceptually related reflections even when exact keywords differ (e.g., searching *"moments of clarity"* identifies entries discussing *"peaceful morning coffee"*).
+
+### 9. Zero-Content-Visibility Enterprise & Organization Licensing
+- **Corporate Account Provisioning**: Organizations can purchase and allocate employee seats (`organizations/{orgId}/members/{userId}`).
+- **Strict Privacy Guarantee**: Firestore security rules structurally guarantee that organization administrators **CANNOT** read, query, or access any employee's private reflections, mood data, or conversation transcripts under any circumstances (`users/{userId}/entries/*` remains exclusively bound to `request.auth.uid == userId`).
+- **Transparency & Disclosure**: Employees are shown an explicit disclosure modal outlining what the company can see (seat status, email, join date) and what is strictly private (all journal entries, mood, and audio).
+- **Admin Audit Trail**: Seat actions (`seat_invited`, `seat_removed`, `seat_reactivated`) append immutable audit logs to `organizations/{orgId}/auditLog/{logId}`.
+
+### 10. Weekly Review Synthesis & Daily Flashcards
+- **Multi-Day Longitudinal Synthesis**: Analyzes an entire week of reflections and produces an executive overview, primary themes, emotional trajectories, and key takeaways.
+- **Interactive Daily Flashcards**: Allows the author to flip through individual day cards within the week, reviewing summaries, turns, and emotional milestones.
+
+### 11. Reflection Universe Interactive Constellation
+- **Interactive 2D Cosmos**: Maps journal entries as glowing stars in an orbital universe canvas. Proximity reflects semantic relatedness, with color denoting detected mood.
+- **Pan, Orbit & Focus**: Full physics-driven zooming, panning, keyword filtering, and star selection to re-open historical reflections.
+
+### 12. Shareable Reflection Quote Cards
+- **High-Resolution Card Generator**: Converts chosen reflection quotes and takeaways into aesthetic visual cards ready for downloading or sharing, keeping the rest of the journal entirely confidential.
 
 ---
 
 ## ⚙️ Prerequisites & Environment Setup
 
-### 1. Google Cloud Project & Tools
-Ensure you have the [Google Cloud SDK (`gcloud` CLI)](https://cloud.google.com/sdk/docs/install) installed and authenticated:
+### 1. Google Cloud Project & CLI
+Install and authenticate the [Google Cloud SDK (`gcloud` CLI)](https://cloud.google.com/sdk/docs/install):
 ```bash
-# Authenticate gcloud CLI
+# Authenticate with your Google Cloud account
 gcloud auth login
 
-# Set your active Google Cloud project
+# Set your target Google Cloud project
 gcloud config set project YOUR_PROJECT_ID
 ```
 
@@ -68,7 +101,7 @@ gcloud services enable \
 ```
 
 ### 3. Provision Cloud Firestore
-If you have not already created a Firestore database in your Google Cloud project:
+If Firestore is not yet initialized in your Google Cloud project:
 ```bash
 gcloud firestore databases create --location=us-central1 --type=firestore-native
 ```
@@ -77,7 +110,7 @@ gcloud firestore databases create --location=us-central1 --type=firestore-native
 
 ## 🔐 Secret Management with Google Cloud Secret Manager
 
-All sensitive API keys and client credentials must be managed via Google Cloud Secret Manager and injected at runtime as environment variables.
+All sensitive operational credentials must be stored in Google Cloud Secret Manager and dynamically mapped to Cloud Run container environment variables.
 
 ### 1. Create Secrets in Secret Manager
 ```bash
@@ -98,8 +131,8 @@ echo -n "YOUR_SPOTIFY_CLIENT_ID" | gcloud secrets versions add SPOTIFY_CLIENT_ID
 echo -n "YOUR_SPOTIFY_CLIENT_SECRET" | gcloud secrets versions add SPOTIFY_CLIENT_SECRET --data-file=-
 ```
 
-### 3. Grant Cloud Run Runtime Service Account Access
-Retrieve your project number and bind the `secretmanager.secretAccessor` IAM role to the default Compute service account:
+### 3. Grant Cloud Run Runtime Service Account Permissions
+Retrieve your project number and grant `roles/secretmanager.secretAccessor` to the compute service account:
 ```bash
 PROJECT_NUMBER=$(gcloud projects describe $(gcloud config get-value project) --format="value(projectNumber)")
 
@@ -120,40 +153,38 @@ gcloud secrets add-iam-policy-binding SPOTIFY_CLIENT_SECRET \
 
 ## 🎧 Spotify Developer Application Setup
 
-To enable mood-grounded music suggestions, set up an application on the Spotify Developer Dashboard:
+To enable mood-grounded music recommendations and playback previews:
 
-1. **Create an App**:
-   - Go to the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard).
-   - Log in and click **Create App**.
-   - Set **App Name** (e.g., `Gemini Journal Companion`) and description.
-   - Set **Which API/SDKs are you planning to use?** to **Web API**.
+1. **Register an Application**:
+   - Navigate to the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard).
+   - Click **Create App**.
+   - Set **App Name** (e.g., `Inner Sanctum Reflection Companion`) and App Description.
+   - Select **Web API** under APIs/SDKs to use.
 
 2. **Configure Redirect URIs**:
-   - In your app settings, add your authorized Redirect URIs:
+   - In app settings, add your authorized redirect URIs:
      - Local development: `http://localhost:3000/api/spotify/callback` and `http://localhost:3000`
      - Production: `https://<YOUR-CLOUD-RUN-SERVICE-URL>/api/spotify/callback` and `https://<YOUR-CLOUD-RUN-SERVICE-URL>`
-   - Save changes.
+   - Save the configuration.
 
-3. **Retrieve Credentials**:
-   - Copy the **Client ID** and click **View client secret** to copy the **Client Secret**.
-   - Add these values to Secret Manager as shown in the previous section.
+3. **Store Credentials in Secret Manager**:
+   - Copy **Client ID** and **Client Secret**.
+   - Add them to Secret Manager as shown in the previous section.
 
-4. **OAuth Scopes Used**:
-   The application requests minimal, read-only scopes:
-   - `user-read-private`: Fetch display name and user country for music catalog compatibility.
-   - `user-read-email`: Verify account linkage.
-   - `user-top-read`: Ground recommendations in user music taste.
-   - `playlist-read-private`: Read playlists for contextual suggestions.
+4. **Requested Read-Only OAuth Scopes**:
+   - `user-read-private`: Verify country catalog compatibility.
+   - `user-read-email`: Verify account connection.
+   - `user-top-read`: Contextualize recommendations based on top artists and genres.
+   - `playlist-read-private`: Retrieve curated ambient and reflective playlists.
 
 > [!NOTE]
-> **Spotify Development Mode & Premium Requirement**:
-> While an app is in Spotify's "Development Mode", only users explicitly added under **Dashboard > Settings > User Management** can authorize. Additionally, Spotify Web Playback SDK or full playback streaming features require an active **Spotify Premium subscription** on the developer/tester account.
+> While the Spotify app is in "Development Mode", authorize testers by adding their Spotify email under **Dashboard > Settings > User Management**. Full Spotify Web Playback streaming requires an active Spotify Premium subscription on the user account.
 
 ---
 
 ## 🛡️ Cloud Firestore Security Rules
 
-Deploy the following production rules via Firebase CLI (`firebase deploy --only firestore:rules`) or the Google Cloud Console. These rules enforce complete user isolation, calendar-based hierarchy, and zero-content visibility for organization administrators:
+Deploy the following security rules via Firebase CLI (`firebase deploy --only firestore:rules`) or the Google Cloud Console. These rules enforce strict owner-isolation for entries, subcollection cascading, and zero-content visibility for organization administrators:
 
 ```javascript
 rules_version = '2';
@@ -184,7 +215,7 @@ service cloud.firestore {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
 
-      // Interaction logs if needed (strictly owner-bound)
+      // Interaction logs (strictly owner-bound)
       match /interactions/{interactionId} {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
@@ -260,10 +291,10 @@ service cloud.firestore {
 ## 🚀 Cloud Run Deployment & Verification Label
 
 ### 1. Build and Deploy to Google Cloud Run
-Deploy the application directly from source. Cloud Build will containerize the application, resolve Node.js dependencies, and bind the runtime secrets:
+Deploy the application directly from source. Cloud Build compiles the TypeScript client bundle, packages the standalone CommonJS server (`dist/server.cjs`), and binds runtime secrets:
 
 ```bash
-gcloud run deploy gemini-journal-reflections \
+gcloud run deploy inner-sanctum-journal \
   --source . \
   --region us-central1 \
   --allow-unauthenticated \
@@ -272,10 +303,10 @@ gcloud run deploy gemini-journal-reflections \
 ```
 
 ### 2. Apply Mandatory Campaign Verification Label
-Update the Cloud Run service with the required verification label to register it for automated evaluation:
+Update the Cloud Run service with the required label for challenge verification:
 
 ```bash
-gcloud run services update gemini-journal-reflections \
+gcloud run services update inner-sanctum-journal \
   --update-labels=dev-tutorial=cloud-run-ai-challenge \
   --region=us-central1
 ```
@@ -284,29 +315,29 @@ gcloud run services update gemini-journal-reflections \
 
 ## 🔒 Security & Robustness Hardening Standards
 
-The system adheres strictly to the OWASP Top 10 for Web and LLM Applications:
+The system adheres to the OWASP Top 10 for Web Applications and OWASP Top 10 for LLMs:
 
 | Mitigation Control | Architectural Implementation |
 | :--- | :--- |
-| **Startup Secret Fail-Fast** | `validateStartupSecrets()` verifies at container boot that `GEMINI_API_KEY`, `SPOTIFY_CLIENT_ID`, and `SPOTIFY_CLIENT_SECRET` are non-empty strings. Refuses to listen on port 3000 if any key is missing. |
-| **Input Length Boundaries** | `INPUT_LIMITS` rejects oversized payloads on all routes (`4,000` chars/message, `120` chars/title, `300` chars/search query, `50` turns max), supplemented by HTML `maxLength` attributes. |
-| **Model Resilience Fallback** | `generateContentWithFallback` cycles through a 4-tier model ladder (`gemini-3.6-flash` → `gemini-3.1-flash-lite` → `gemini-flash-latest` → `gemini-3.7-flash`) on HTTP `503`, `429`, or `500` status codes. |
-| **Zero-Content Privacy** | Organization admins can invite and manage seats, but Firestore rules structurally forbid access to `users/{userId}/entries/*`. The UI provides clear upfront disclosures to employees. |
-| **Immutable Admin Audit Log** | All seat lifecycle actions (`seat_invited`, `seat_removed`, `seat_reactivated`, `invite_code_copied`) append records to `organizations/{orgId}/auditLog/{logId}` without user journal data. |
-| **React Error Boundaries** | Hierarchical boundaries wrap the application root and individual heavy modules (Universe canvas, Calendar view, Journal editor) to prevent full-page blank crashes. |
-| **Unprivileged Health Check** | `GET /api/health` and `GET /health` return `{ "status": "ok", "timestamp": "..." }` with zero environment variable or key leakage. |
+| **Startup Secret Fail-Fast** | `validateStartupSecrets()` verifies at container boot that `GEMINI_API_KEY`, `SPOTIFY_CLIENT_ID`, and `SPOTIFY_CLIENT_SECRET` are non-empty strings. Prevents silent misconfigured launches. |
+| **Input Boundaries & Sanitization** | `INPUT_LIMITS` rejects oversized payloads on all routes (`4,000` chars/message, `120` chars/title, `300` chars/search query, `50` turns max), backed by client HTML `maxLength` attributes. |
+| **Model Resilience Fallback Ladder** | `generateContentWithFallback` cycles through a 4-tier model ladder (`gemini-3.6-flash` → `gemini-3.1-flash-lite` → `gemini-flash-latest` → `gemini-3.7-flash`) on HTTP `503`, `429`, or `500` status codes before surfacing an error. |
+| **Zero-Content Employee Privacy** | Organization admins manage seats and billing, but Firestore security rules structurally forbid any organization query against `users/{userId}/entries/*`. Clear disclosures inform employees prior to joining. |
+| **Safe Error Extraction** | Client-side error handling uses `extractErrorMessage()` to parse nested API error payloads into clear human-readable strings, preventing raw `[object Object]` displays. |
+| **React Error Boundaries** | Hierarchical boundaries wrap the application root and heavy interactive modules (Constellation Universe canvas, Calendar view, Journal editor) to isolate errors and prevent white-screen crashes. |
+| **Pristine Production Build** | TypeScript compiler (`tsc --noEmit`) and Vite/esbuild run with **0 errors and 0 warnings**. Zero client-side debug statements or mock placeholders exist in production code. |
 
 ---
 
-## 💻 Local Development
+## 💻 Local Development & Testing
 
 ### 1. Install Dependencies
 ```bash
 npm install
 ```
 
-### 2. Setup Local Environment Variables
-Create a local `.env` file based on `.env.example`:
+### 2. Configure Local Environment Variables
+Create a `.env` file at the project root:
 ```env
 GEMINI_API_KEY=your_gemini_api_key_here
 SPOTIFY_CLIENT_ID=your_spotify_client_id_here
@@ -317,4 +348,13 @@ SPOTIFY_CLIENT_SECRET=your_spotify_client_secret_here
 ```bash
 npm run dev
 ```
-The server will start at `http://localhost:3000` with Vite middleware and API endpoints active.
+The server will start at `http://localhost:3000` with Vite middleware and backend endpoints active.
+
+### 4. Run Build & Typecheck Verifications
+```bash
+# Verify TypeScript without emitting output
+npm run lint
+
+# Compile production bundle
+npm run build
+```

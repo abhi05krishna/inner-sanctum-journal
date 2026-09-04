@@ -71,6 +71,7 @@ const MODEL_FALLBACK_LADDER = [
   'gemini-3.1-flash-lite',
   'gemini-flash-latest',
   'gemini-3.7-flash',
+  'gemini-3.8-flash',
 ];
 
 // Embedding Models Fallback Ladder
@@ -755,21 +756,8 @@ async function generateContentWithFallback(
     } catch (err: any) {
       console.warn(`[Gemini API] Model ${model} failed:`, err?.message || err);
       lastError = err;
-      // Recoverable error conditions: 503, 429, 404, 500, or network timeouts
-      const isRecoverable =
-        err?.status === 503 ||
-        err?.status === 429 ||
-        err?.status === 404 ||
-        err?.status === 500 ||
-        err?.message?.includes('RESOURCE_EXHAUSTED') ||
-        err?.message?.includes('UNAVAILABLE') ||
-        err?.message?.includes('not found') ||
-        err?.message?.includes('fetch failed');
-
-      if (!isRecoverable && MODEL_FALLBACK_LADDER.indexOf(model) === 0) {
-        // If not typical recoverable, continue ladder anyway to ensure high availability
-        continue;
-      }
+      // Recoverable error conditions: sequentially attempt the next model in the fallback chain
+      continue;
     }
   }
 
@@ -1621,6 +1609,64 @@ app.get('/api/spotify/stats', (req, res) => {
 });
 
 /**
+ * Spotify Refresh Token Endpoint
+ */
+app.post('/api/spotify/refresh-token', async (req, res) => {
+  try {
+    const userId = (req.headers['x-user-uid'] as string) || req.body?.userId;
+    if (!userId) {
+      return res.status(400).json({ error: 'Missing required parameter: userId', message: 'Missing required parameter: userId' });
+    }
+    const token = await getValidUserAccessToken(userId);
+    if (!token) {
+      return res.status(401).json({ error: 'Failed to refresh Spotify token or no token stored.', message: 'Failed to refresh Spotify token or no token stored.' });
+    }
+    return res.json({ success: true, connected: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Error refreshing Spotify token.', message: err?.message || 'Error refreshing Spotify token.' });
+  }
+});
+
+/**
+ * Spotify Search Proxy Endpoints (GET and POST)
+ * Ensures all Spotify API queries are proxied server-side without exposing credentials
+ */
+app.get('/api/spotify/search', async (req, res) => {
+  try {
+    const query = typeof req.query.q === 'string' ? req.query.q : (typeof req.query.query === 'string' ? req.query.query : '');
+    const mood = typeof req.query.mood === 'string' ? req.query.mood : 'peaceful';
+    const userId = (req.headers['x-user-uid'] as string) || (req.query.userId as string) || undefined;
+    const result = await executeSpotifyMusicSearch({
+      query,
+      mood,
+      reasoning: 'User search query',
+      userId,
+    });
+    return res.json({ success: true, result });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to search Spotify.', message: err?.message || 'Failed to search Spotify.' });
+  }
+});
+
+app.post('/api/spotify/search', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const query = typeof body.query === 'string' ? body.query : (typeof body.q === 'string' ? body.q : '');
+    const mood = typeof body.mood === 'string' ? body.mood : 'peaceful';
+    const userId = (req.headers['x-user-uid'] as string) || body.userId || undefined;
+    const result = await executeSpotifyMusicSearch({
+      query,
+      mood,
+      reasoning: body.reasoning || 'User search query',
+      userId,
+    });
+    return res.json({ success: true, result });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to search Spotify.', message: err?.message || 'Failed to search Spotify.' });
+  }
+});
+
+/**
  * Session Summarization & Actionable Takeaways Endpoint
  */
 app.post('/api/gemini/summarize', async (req, res) => {
@@ -2092,8 +2138,37 @@ app.post('/api/gemini/search', async (req, res) => {
     console.error('Error in /api/gemini/search:', error);
     return res.status(500).json({
       error: error?.message || 'Failed to execute semantic search.',
+      message: error?.message || 'Failed to execute semantic search.',
     });
   }
+});
+
+// -------------------------------------------------------------
+// API Fallback & Global Error Handlers
+// -------------------------------------------------------------
+
+// Explicit 404 handler for any unmatched API endpoints
+app.all('/api/*', (req, res) => {
+  return res.status(404).json({
+    error: `API endpoint not found: ${req.method} ${req.path}`,
+    message: `API endpoint not found: ${req.method} ${req.path}`,
+    code: 'NOT_FOUND',
+  });
+});
+
+// Global Express error handler middleware
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error('[Express Global Error Handler]', err);
+  if (res.headersSent) {
+    return next(err);
+  }
+  const status = typeof err.status === 'number' && err.status >= 400 && err.status < 600 ? err.status : 500;
+  const msg = err?.message || 'An unexpected internal error occurred.';
+  return res.status(status).json({
+    error: msg,
+    message: msg,
+    code: err?.code || 'INTERNAL_ERROR',
+  });
 });
 
 // -------------------------------------------------------------

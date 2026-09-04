@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import type { JournalEntry, ReflectionMode, MoodType, WeatherData, VisualDriverType } from '../types';
 import { LandingVideoBackground } from './LandingVideoBackground';
+import { extractErrorMessage } from '../utils/errors';
 
 interface CalendarViewProps {
   entries: JournalEntry[];
@@ -63,6 +64,205 @@ export function formatDateKey(d: Date): string {
   const day = String(d.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 }
+
+interface ArchiveCardProps {
+  entry: any;
+  onSelect: (dateKey: string) => void;
+  onDelete: (dateKey: string) => void;
+}
+
+const ArchiveCard: React.FC<ArchiveCardProps> = ({ entry, onSelect, onDelete }) => {
+  const [pageIndex, setPageIndex] = useState(0);
+  const dateKey = entry.date || entry.id;
+  const modeInfo = MODE_COLORS[entry.mode as ReflectionMode] || MODE_COLORS.reflect;
+  const moodEmoji = entry.mood ? MOOD_EMOJIS[entry.mood as MoodType] : null;
+  const semanticScore = entry._semanticScore;
+  const isSemanticHit = entry._isSemanticHit;
+
+  // Build paginated content pages so long content does not get cut off or overflow
+  const pages = useMemo(() => {
+    const list: { label: string; text: string }[] = [];
+
+    // Page 1: Synthesis / Summary if present
+    if (entry.summary && typeof entry.summary === 'string' && entry.summary.trim()) {
+      list.push({ label: 'Summary', text: entry.summary.trim() });
+    }
+
+    // Dialogue turns
+    if (Array.isArray(entry.turns) && entry.turns.length > 0) {
+      entry.turns.forEach((turn: any, tIdx: number) => {
+        const role = turn.role === 'user' ? 'Me' : 'Gemini';
+        const rawContent = (turn.content || '').trim();
+        if (!rawContent) return;
+
+        // If turn is longer than 150 chars, chunk it so it fits comfortably in card display area
+        if (rawContent.length > 150) {
+          const words = rawContent.split(' ');
+          let currentChunk = '';
+          const chunks: string[] = [];
+          for (const word of words) {
+            if ((currentChunk + ' ' + word).trim().length > 130 && currentChunk.length > 0) {
+              chunks.push(currentChunk.trim());
+              currentChunk = word;
+            } else {
+              currentChunk = currentChunk ? `${currentChunk} ${word}` : word;
+            }
+          }
+          if (currentChunk.trim()) {
+            chunks.push(currentChunk.trim());
+          }
+
+          chunks.forEach((chunk, cIdx) => {
+            list.push({
+              label: `${role} (${tIdx + 1}.${cIdx + 1})`,
+              text: chunk,
+            });
+          });
+        } else {
+          list.push({
+            label: `${role} (${tIdx + 1})`,
+            text: rawContent,
+          });
+        }
+      });
+    }
+
+    // Key Takeaways or Action Items
+    if (Array.isArray(entry.takeaways) && entry.takeaways.length > 0) {
+      list.push({
+        label: 'Takeaways',
+        text: entry.takeaways.join(' • '),
+      });
+    }
+
+    if (Array.isArray(entry.actionItems) && entry.actionItems.length > 0) {
+      list.push({
+        label: 'Action Items',
+        text: entry.actionItems.join(' • '),
+      });
+    }
+
+    if (list.length === 0) {
+      list.push({ label: 'Reflection', text: 'No dialogue recorded yet.' });
+    }
+
+    return list;
+  }, [entry]);
+
+  // Keep page index within bounds if pages change
+  const activePage = pages[Math.min(pageIndex, pages.length - 1)] || pages[0];
+  const totalPages = pages.length;
+
+  return (
+    <div
+      id={`archive-entry-${dateKey}`}
+      onClick={() => onSelect(dateKey)}
+      className={`rounded-xl border bg-[#FAF3E1]/95 hover:border-[#FA8112] hover:shadow-xs transition-all cursor-pointer flex flex-col justify-between p-3 group/card ${
+        isSemanticHit ? 'border-[#FA8112] bg-[#FFF5E8]' : 'border-[#DFCBA0]'
+      }`}
+    >
+      <div>
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <span className="text-[11px] font-serif font-bold text-[#994500]">
+            {dateKey}
+          </span>
+          <div className="flex items-center gap-1">
+            {moodEmoji && <span className="text-[11px]">{moodEmoji}</span>}
+            <span
+              className={`inline-flex items-center rounded px-1.5 py-0.2 text-[9px] font-bold border ${modeInfo.bg} ${modeInfo.text} ${modeInfo.border}`}
+            >
+              {modeInfo.label}
+            </span>
+          </div>
+        </div>
+
+        <h4 className="text-[11px] font-serif font-bold text-[#111111] line-clamp-1 group-hover/card:text-[#FA8112] transition-colors">
+          {entry.title || 'Untitled Reflection'}
+        </h4>
+
+        {/* Paginated Excerpt Content Display */}
+        <div className="mt-1 min-h-[48px] flex flex-col justify-between">
+          <p className="text-[10px] text-[#1A1A1A] font-medium leading-relaxed">
+            <span className="text-[9px] font-bold text-[#8A5016] uppercase tracking-wider mr-1">
+              [{activePage.label}]
+            </span>
+            {activePage.text}
+          </p>
+
+          {/* In-Card Pagination Controls when content exceeds a single card page */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between pt-1 mt-1 border-t border-[#EBDAB3]/70 text-[9px]">
+              <span className="font-mono font-bold text-[#7A4B1A]">
+                {pageIndex + 1} of {totalPages}
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  id={`btn-prev-page-${dateKey}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPageIndex((p) => Math.max(0, p - 1));
+                  }}
+                  disabled={pageIndex === 0}
+                  className="p-0.5 rounded hover:bg-[#EBDAB3] disabled:opacity-30 disabled:cursor-not-allowed text-[#222222] transition-colors cursor-pointer"
+                  title="Previous page"
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="h-3 w-3" />
+                </button>
+                <button
+                  type="button"
+                  id={`btn-next-page-${dateKey}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPageIndex((p) => Math.min(totalPages - 1, p + 1));
+                  }}
+                  disabled={pageIndex >= totalPages - 1}
+                  className="p-0.5 rounded hover:bg-[#EBDAB3] disabled:opacity-30 disabled:cursor-not-allowed text-[#222222] transition-colors cursor-pointer"
+                  title="Next page"
+                  aria-label="Next page"
+                >
+                  <ChevronRight className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-2 pt-1.5 border-t border-[#DFCBA0] flex items-center justify-between text-[9px] text-[#222222]">
+        <div className="flex items-center gap-2">
+          <span className="font-semibold text-[#111111]">{entry.turnsCount ?? (entry.turns?.length || 0)} turns</span>
+          {isSemanticHit && semanticScore ? (
+            <span className="flex items-center gap-0.5 text-[#8A3B00] font-bold bg-[#FFF0E6] px-1.5 py-0.2 rounded border border-[#FDCDB4]">
+              <Sparkles className="h-2 w-2 text-[#FA8112]" />
+              {Math.round(semanticScore * 100)}% match
+            </span>
+          ) : entry.summary ? (
+            <span className="flex items-center gap-1 text-[#111111] font-bold">
+              <Sparkles className="h-2.5 w-2.5 text-[#FA8112]" />
+              Synthesized
+            </span>
+          ) : null}
+        </div>
+
+        {/* Delete Button on Archive Card */}
+        <button
+          id={`btn-delete-archive-${dateKey}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(dateKey);
+          }}
+          className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[9px] font-bold text-[#4A4235] hover:text-[#9E3636] hover:bg-[#FDF2F2] rounded transition-colors cursor-pointer"
+          title="Move reflection to Recently Deleted (15-day recovery)"
+        >
+          <Trash2 className="h-2.5 w-2.5" />
+          <span>Delete</span>
+        </button>
+      </div>
+    </div>
+  );
+};
 
 export const CalendarView: React.FC<CalendarViewProps> = ({
   entries,
@@ -158,7 +358,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
             const errData = await res.json().catch(() => ({}));
             if (!isCancelled) {
               setSearchRateLimitNotice(
-                errData.error || 'Rate limit reached: Gemini API calls are capped. Showing keyword matches.'
+                extractErrorMessage(errData, 'Rate limit reached: Gemini API calls are capped. Showing keyword matches.')
               );
             }
           }
@@ -209,15 +409,36 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     });
   }, []);
 
-  // Map entries by date key for O(1) cell lookups
+  // Map entries by date key for O(1) cell lookups with key normalization
   const entryMap = useMemo(() => {
     const map = new Map<string, JournalEntry>();
     activeEntries.forEach((e) => {
       const key = e.date || e.id;
-      map.set(key, e);
+      if (key) {
+        map.set(key, e);
+        if (key.includes('T')) map.set(key.split('T')[0], e);
+      }
+      if (e.date) {
+        map.set(e.date, e);
+        if (e.date.includes('T')) map.set(e.date.split('T')[0], e);
+      }
+      if (e.id) {
+        map.set(e.id, e);
+        if (e.id.includes('T')) map.set(e.id.split('T')[0], e);
+      }
     });
+
+    // Also include remote search entries
+    Object.values(remoteSearchEntries).forEach((e) => {
+      const key = e.date || e.id;
+      if (key && !map.has(key)) {
+        map.set(key, e);
+        if (key.includes('T')) map.set(key.split('T')[0], e);
+      }
+    });
+
     return map;
-  }, [activeEntries]);
+  }, [activeEntries, remoteSearchEntries]);
 
   const todayEntry = useMemo(() => {
     return entryMap.get(todayStr) || null;
@@ -617,8 +838,19 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                 )}
               </div>
 
-              {/* Primary Action Button: Open Today's Reflection */}
-              <div className="shrink-0 flex items-center">
+              {/* Primary Action Buttons: Open Today's Reflection & Delete Option */}
+              <div className="shrink-0 flex items-center gap-2">
+                {todayEntry && (
+                  <button
+                    id="btn-delete-today-reflection"
+                    onClick={() => setDeletingDateKey(todayStr)}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-[#DFCBA0] bg-[#FAF3E1] hover:bg-[#FDF2F2] hover:text-[#9E3636] hover:border-[#F5CACA] px-3.5 py-2.5 text-xs font-serif font-semibold text-[#5C5549] transition-all cursor-pointer shadow-2xs"
+                    title="Move today's reflection to Recently Deleted (15-day recovery)"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Move to Trash</span>
+                  </button>
+                )}
                 <button
                   id="btn-open-today-reflection"
                   onClick={() => onSelectDate(todayStr)}
@@ -652,6 +884,15 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
             {/* Days Grid with Compact Heights */}
             <div className="grid grid-cols-7 divide-x divide-y divide-[#DFCBA0]">
               {calendarDays.map((cell) => {
+                const hasSavedContent = Boolean(
+                  cell.entry &&
+                  (
+                    (Array.isArray(cell.entry.turns) && cell.entry.turns.length > 0) ||
+                    (cell.entry.title && cell.entry.title.trim() !== '' && cell.entry.title !== 'Untitled Reflection' && cell.entry.title !== 'New Reflection') ||
+                    Boolean(cell.entry.summary) ||
+                    Boolean(cell.entry.moodReason)
+                  )
+                );
                 const hasEntry = !!cell.entry;
                 const modeInfo = cell.entry ? MODE_COLORS[cell.entry.mode] || MODE_COLORS.reflect : null;
                 const moodEmoji = cell.entry?.mood ? MOOD_EMOJIS[cell.entry.mood] : null;
@@ -679,7 +920,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                     className={`group relative min-h-[58px] sm:min-h-[68px] md:min-h-[74px] p-1.5 sm:p-2 flex flex-col justify-between transition-all cursor-pointer ${
                       !cell.isCurrentMonth
                         ? 'bg-[#F5E7C6]/40 text-[#6B6355]'
-                        : hasEntry
+                        : hasSavedContent
                         ? 'bg-[#FAF3E1] hover:bg-[#F5E7C6]'
                         : 'bg-[#FFFFFF]/90 hover:bg-[#FAF3E1]'
                     } ${
@@ -700,7 +941,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                             ? 'bg-[#FA8112] text-white shadow-2xs'
                             : isSearchMatch
                             ? 'bg-[#FA8112] text-white shadow-2xs'
-                            : hasEntry
+                            : hasSavedContent
                             ? 'text-[#111111]'
                             : cell.isCurrentMonth
                             ? 'text-[#222222]'
@@ -722,7 +963,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                           </span>
                         )}
 
-                        {hasEntry && (
+                        {hasSavedContent && (
                           <>
                             {moodEmoji && (
                               <span className="text-[11px] shrink-0" title={`Mood: ${cell.entry?.mood}`}>
@@ -733,14 +974,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                               className="h-1.5 w-1.5 rounded-full bg-[#FA8112]"
                               title="Reflection entry exists"
                             />
-                            {/* Quick delete on cell hover */}
+                            {/* Quick delete on cell hover or focus */}
                             <button
                               id={`btn-delete-cell-${cell.dateStr}`}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setDeletingDateKey(cell.dateStr);
                               }}
-                              className="opacity-0 group-hover:opacity-100 p-0.5 text-[#5C5549] hover:text-[#9E3636] hover:bg-[#FDF2F2] rounded transition-all cursor-pointer"
+                              className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-0.5 text-[#5C5549] hover:text-[#9E3636] hover:bg-[#FDF2F2] rounded transition-all cursor-pointer"
                               title="Move reflection to Recently Deleted (15-day recovery)"
                               aria-label="Delete reflection"
                             >
@@ -753,10 +994,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
 
                     {/* Middle Content: Entry Snippet or Empty hover prompt */}
                     <div className="my-0.5 flex-1 flex flex-col justify-center">
-                      {hasEntry && cell.entry ? (
+                      {hasSavedContent && cell.entry ? (
                         <div className="space-y-0.5">
                           <p className="text-[10px] font-serif font-bold text-[#111111] line-clamp-1 leading-tight group-hover:text-[#FA8112] transition-colors">
-                            {cell.entry.title || 'Reflection'}
+                            {cell.entry.title || (cell.entry.turns && cell.entry.turns.length > 0 ? cell.entry.turns[0].content : 'Reflection')}
                           </p>
                         </div>
                       ) : (
@@ -770,7 +1011,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                     </div>
 
                     {/* Bottom Meta Bar */}
-                    {hasEntry && cell.entry && modeInfo ? (
+                    {hasSavedContent && cell.entry && modeInfo ? (
                       <div className="flex items-center justify-between gap-1 pt-0.5 border-t border-[#DFCBA0] text-[8px]">
                         <span
                           className={`inline-flex items-center rounded px-1 py-0.2 font-bold border ${modeInfo.bg} ${modeInfo.text} ${modeInfo.border}`}
@@ -873,80 +1114,13 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
               ) : (
                 displayedArchiveEntries.map((entry: any) => {
                   const dateKey = entry.date || entry.id;
-                  const modeInfo = MODE_COLORS[entry.mode] || MODE_COLORS.reflect;
-                  const moodEmoji = entry.mood ? MOOD_EMOJIS[entry.mood] : null;
-                  const semanticScore = entry._semanticScore;
-                  const isSemanticHit = entry._isSemanticHit;
-
                   return (
-                    <div
+                    <ArchiveCard
                       key={dateKey}
-                      id={`archive-entry-${dateKey}`}
-                      onClick={() => handleSelectAndNavigate(dateKey)}
-                      className={`rounded-xl border bg-[#FAF3E1]/95 hover:border-[#FA8112] hover:shadow-xs transition-all cursor-pointer flex flex-col justify-between p-3 group/card ${
-                        isSemanticHit
-                          ? 'border-[#FA8112] bg-[#FFF5E8]'
-                          : 'border-[#DFCBA0]'
-                      }`}
-                    >
-                      <div>
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <span className="text-[11px] font-serif font-bold text-[#994500]">
-                            {dateKey}
-                          </span>
-                          <div className="flex items-center gap-1">
-                            {moodEmoji && <span className="text-[11px]">{moodEmoji}</span>}
-                            <span
-                              className={`inline-flex items-center rounded px-1.5 py-0.2 text-[9px] font-bold border ${modeInfo.bg} ${modeInfo.text} ${modeInfo.border}`}
-                            >
-                              {modeInfo.label}
-                            </span>
-                          </div>
-                        </div>
-
-                        <h4 className="text-[11px] font-serif font-bold text-[#111111] line-clamp-1 group-hover/card:text-[#FA8112] transition-colors">
-                          {entry.title || 'Untitled Reflection'}
-                        </h4>
-
-                        <p className="text-[10px] text-[#1A1A1A] font-medium line-clamp-2 mt-0.5 leading-relaxed">
-                          {entry.summary ||
-                            (entry.turns && entry.turns.length > 0
-                              ? entry.turns[0].content
-                              : 'No dialogue yet...')}
-                        </p>
-                      </div>
-
-                      <div className="mt-2.5 pt-1.5 border-t border-[#DFCBA0] flex items-center justify-between text-[9px] text-[#222222]">
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold text-[#111111]">{entry.turnsCount ?? (entry.turns?.length || 0)} turns</span>
-                          {isSemanticHit && semanticScore ? (
-                            <span className="flex items-center gap-0.5 text-[#8A3B00] font-bold bg-[#FFF0E6] px-1.5 py-0.2 rounded border border-[#FDCDB4]">
-                              <Sparkles className="h-2 w-2 text-[#FA8112]" />
-                              {Math.round(semanticScore * 100)}% match
-                            </span>
-                          ) : entry.summary ? (
-                            <span className="flex items-center gap-1 text-[#111111] font-bold">
-                              <Sparkles className="h-2.5 w-2.5 text-[#FA8112]" />
-                              Synthesized
-                            </span>
-                          ) : null}
-                        </div>
-
-                        {/* Delete Button on Archive Card */}
-                        <button
-                          id={`btn-delete-archive-${dateKey}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDeletingDateKey(dateKey);
-                          }}
-                          className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[9px] font-bold text-[#4A4235] hover:text-[#9E3636] hover:bg-[#FDF2F2] rounded transition-colors cursor-pointer"
-                          title="Move reflection to Recently Deleted (15-day recovery)"
-                        >
-                          <Trash2 className="h-2.5 w-2.5" />
-                          <span>Delete</span>
-                        </button>
-                      </div>
-                    </div>
+                      entry={entry}
+                      onSelect={handleSelectAndNavigate}
+                      onDelete={(key) => setDeletingDateKey(key)}
+                    />
                   );
                 })
               )}

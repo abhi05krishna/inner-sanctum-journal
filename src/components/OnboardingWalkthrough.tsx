@@ -176,6 +176,13 @@ export const OnboardingWalkthrough: React.FC<OnboardingWalkthroughProps> = ({
 }) => {
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
 
+  // Reset to the first step whenever walkthrough opens
+  useEffect(() => {
+    if (isOpen) {
+      setCurrentStepIndex(0);
+    }
+  }, [isOpen]);
+
   const step = ONBOARDING_STEPS[currentStepIndex];
   const isFirstStep = currentStepIndex === 0;
   const isLastStep = currentStepIndex === ONBOARDING_STEPS.length - 1;
