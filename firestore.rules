@@ -1,0 +1,99 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global catch-all default deny for defense-in-depth
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // User profile isolation (ABSOLUTE ISOLATION: Zero admin or organization bypass)
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+
+      // Calendar-based daily journal entries: users/{userId}/entries/{YYYY-MM-DD}
+      // CRITICAL: request.auth.uid == userId ONLY. No org role or admin bypass condition exists here.
+      match /entries/{date} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+
+        // Multi-turn conversation messages nested under each day's document
+        match /messages/{messageId} {
+          allow read, write: if request.auth != null && request.auth.uid == userId;
+        }
+      }
+
+      // Spotify OAuth tokens and settings isolation (strictly owner-bound)
+      match /spotifyAuth/{docId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+
+      // Interaction logs if needed (strictly owner-bound)
+      match /interactions/{interactionId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+
+    // Organization and Enterprise Account Management
+    match /organizations/{orgId} {
+      // Authenticated users can create an organization
+      allow create: if request.auth != null && request.resource.data.createdBy == request.auth.uid;
+      
+      // Read access to org metadata for authenticated users
+      allow read: if request.auth != null;
+
+      // Only org admins/creators can update or delete org metadata
+      allow update, delete: if request.auth != null && (
+        resource.data.createdBy == request.auth.uid ||
+        (exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.role == 'admin')
+      );
+
+      // Organization Members (Account-level seat metadata ONLY - NEVER journal content)
+      match /members/{memberId} {
+        // Members can read their own seat record; Org Admins can read all member seat records in their org
+        allow read: if request.auth != null && (
+          request.auth.uid == memberId ||
+          (exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)) &&
+           get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.role == 'admin') ||
+          get(/databases/$(database)/documents/organizations/$(orgId)).data.createdBy == request.auth.uid
+        );
+
+        // Admins can invite/add members; users can create their own member record when joining via invite
+        allow create: if request.auth != null && (
+          request.auth.uid == memberId ||
+          (exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)) &&
+           get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.role == 'admin') ||
+          get(/databases/$(database)/documents/organizations/$(orgId)).data.createdBy == request.auth.uid
+        );
+
+        // ONLY Org Admins can update/remove member seat status. Employees CANNOT unlink/delete their own seat record.
+        allow update, delete: if request.auth != null && (
+          (exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)) &&
+           get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.role == 'admin') ||
+          get(/databases/$(database)/documents/organizations/$(orgId)).data.createdBy == request.auth.uid
+        );
+      }
+
+      // Organization Seat Invitations
+      match /invites/{inviteId} {
+        allow read: if request.auth != null;
+        allow create, update, delete: if request.auth != null && (
+          (exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)) &&
+           get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.role == 'admin') ||
+          get(/databases/$(database)/documents/organizations/$(orgId)).data.createdBy == request.auth.uid
+        );
+      }
+
+      // Organization Admin Audit Trail (Account/Seat actions ONLY - Zero journal content)
+      match /auditLog/{logId} {
+        // Only Org Admins / creator can read or record audit trail entries
+        allow read, write: if request.auth != null && (
+          (exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)) &&
+           get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.role == 'admin') ||
+          get(/databases/$(database)/documents/organizations/$(orgId)).data.createdBy == request.auth.uid
+        );
+      }
+    }
+  }
+}
+
+

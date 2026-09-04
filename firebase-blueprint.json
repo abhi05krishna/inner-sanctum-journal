@@ -1,0 +1,325 @@
+{
+  "entities": {
+    "JournalEntry": {
+      "title": "JournalEntry",
+      "description": "A single calendar day's reflection session and metadata",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "Calendar date formatted as YYYY-MM-DD"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the owner"
+        },
+        "date": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "Calendar date string YYYY-MM-DD"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["reflect", "brainstorm", "summarize", "deep_inquiry", "gratitude", "problem_solving"]
+        },
+        "mood": {
+          "type": "string",
+          "enum": ["peaceful", "energized", "thoughtful", "anxious", "motivated", "overwhelmed", "neutral"]
+        },
+        "tags": {
+          "type": "array"
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 5000
+        },
+        "takeaways": {
+          "type": "array"
+        },
+        "actionItems": {
+          "type": "array"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "string"
+        },
+        "isDeleted": {
+          "type": "boolean",
+          "description": "Soft delete state flag"
+        },
+        "deletedAt": {
+          "type": "string",
+          "description": "ISO timestamp when the entry was soft-deleted"
+        }
+      },
+      "required": ["userId", "date", "createdAt", "updatedAt"]
+    },
+    "JournalMessage": {
+      "title": "JournalMessage",
+      "description": "A single dialogue turn within a calendar day's journal reflection",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["user", "gemini"]
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "required": ["role", "content", "timestamp"]
+    },
+    "SpotifyAuth": {
+      "title": "SpotifyAuth",
+      "description": "Encrypted user Spotify OAuth credentials and metadata scoped per user",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID"
+        },
+        "connected": {
+          "type": "boolean"
+        },
+        "spotifyDisplayName": {
+          "type": "string"
+        },
+        "spotifyUserId": {
+          "type": "string"
+        },
+        "scopes": {
+          "type": "array"
+        },
+        "accessToken": {
+          "type": "string"
+        },
+        "refreshToken": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "number"
+        },
+        "updatedAt": {
+          "type": "string"
+        }
+      },
+      "required": ["userId", "connected", "updatedAt"]
+    },
+    "Organization": {
+      "title": "Organization",
+      "description": "Organization metadata and seat license configuration",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "domain": {
+          "type": "string"
+        },
+        "createdBy": {
+          "type": "string",
+          "description": "Firebase Auth UID of the founding org admin"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "plan": {
+          "type": "string",
+          "enum": ["starter", "team", "enterprise"]
+        },
+        "totalSeats": {
+          "type": "number"
+        },
+        "inviteCode": {
+          "type": "string"
+        }
+      },
+      "required": ["name", "createdBy", "createdAt", "totalSeats", "inviteCode"]
+    },
+    "OrgMember": {
+      "title": "OrgMember",
+      "description": "Account-level membership and seat status record with ZERO journal content",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Firebase Auth UID of the member"
+        },
+        "orgId": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "employee"]
+        },
+        "seatStatus": {
+          "type": "string",
+          "enum": ["active", "pending", "removed"]
+        },
+        "joinedAt": {
+          "type": "string"
+        },
+        "invitedBy": {
+          "type": "string"
+        },
+        "lastActiveDate": {
+          "type": "string",
+          "description": "Date string YYYY-MM-DD of last activity only - no content"
+        },
+        "disclosureAcceptedAt": {
+          "type": "string",
+          "description": "ISO timestamp when the employee accepted the zero content visibility disclosure"
+        }
+      },
+      "required": ["orgId", "email", "role", "seatStatus", "joinedAt"]
+    },
+    "OrgInvite": {
+      "title": "OrgInvite",
+      "description": "Organization seat invitation record",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "orgId": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "employee"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "accepted", "revoked"]
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "createdBy": {
+          "type": "string"
+        }
+      },
+      "required": ["orgId", "code", "role", "status", "createdAt", "createdBy"]
+    },
+    "OrgAuditLog": {
+      "title": "OrgAuditLog",
+      "description": "Immutable organization administrative action audit entry with account/seat metadata only",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "orgId": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string",
+          "enum": ["seat_invited", "seat_removed", "seat_reactivated", "org_created", "invite_code_copied"]
+        },
+        "performedBy": {
+          "type": "string"
+        },
+        "performedByEmail": {
+          "type": "string"
+        },
+        "affectedMemberId": {
+          "type": "string"
+        },
+        "affectedEmail": {
+          "type": "string"
+        },
+        "details": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "required": ["orgId", "action", "performedBy", "timestamp"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile state and onboarding completion flag",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string"
+        },
+        "currentOrgId": {
+          "type": "string"
+        },
+        "hasSeenOnboarding": {
+          "type": "boolean",
+          "description": "True if the user has completed or dismissed the onboarding walkthrough"
+        },
+        "updatedAt": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile document storing current organization context and onboarding status"
+    },
+    "/users/{userId}/entries/{date}": {
+      "schema": "JournalEntry",
+      "description": "Daily calendar-keyed journal entry document for the authenticated user"
+    },
+    "/users/{userId}/entries/{date}/messages/{messageId}": {
+      "schema": "JournalMessage",
+      "description": "Subcollection of multi-turn conversation messages under the day's document"
+    },
+    "/users/{userId}/spotifyAuth/{docId}": {
+      "schema": "SpotifyAuth",
+      "description": "Scoped Spotify connection credentials and preferences for the user"
+    },
+    "/organizations/{orgId}": {
+      "schema": "Organization",
+      "description": "Organization metadata and seat management configuration"
+    },
+    "/organizations/{orgId}/members/{userId}": {
+      "schema": "OrgMember",
+      "description": "Lightweight seat membership record with account metadata only and zero journal content"
+    },
+    "/organizations/{orgId}/invites/{inviteId}": {
+      "schema": "OrgInvite",
+      "description": "Seat invitation codes and records for inviting team members"
+    },
+    "/organizations/{orgId}/auditLog/{logId}": {
+      "schema": "OrgAuditLog",
+      "description": "Immutable administrative action audit trail with account/seat actions only and zero journal content"
+    }
+  }
+}

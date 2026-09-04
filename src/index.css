@@ -1,0 +1,392 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-serif: 'Newsreader', Georgia, 'Times New Roman', serif;
+    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --color-bg-primary: #FAF3E1;
+    --color-text-primary: #222222;
+    --color-bg-secondary: #F5E7C6;
+    --color-accent: #FA8112;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #FAF3E1;
+    color: #222222;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, .font-serif-editorial {
+    font-family: var(--font-serif);
+  }
+}
+
+/* Custom scrollbars for editorial feel */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #E5D8B8;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #FA8112;
+}
+
+/* Atmospheric Ambient Background Keyframe Animations */
+@keyframes gradientFlow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes floatOrb1 {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  33% {
+    transform: translate3d(180px, -120px, 0) scale(1.3);
+  }
+  66% {
+    transform: translate3d(-100px, 90px, 0) scale(0.85);
+  }
+}
+
+@keyframes floatOrb2 {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  33% {
+    transform: translate3d(-150px, 120px, 0) scale(0.8);
+  }
+  66% {
+    transform: translate3d(140px, -160px, 0) scale(1.3);
+  }
+}
+
+@keyframes floatOrb3 {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) scale(0.9);
+  }
+  50% {
+    transform: translate3d(190px, 130px, 0) scale(1.35);
+  }
+}
+
+@keyframes floatOrb4 {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) scale(1.2);
+  }
+  50% {
+    transform: translate3d(-160px, -130px, 0) scale(0.8);
+  }
+}
+
+@keyframes rainFall {
+  0% {
+    transform: translateY(-80px) translateX(0);
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.95;
+  }
+  85% {
+    opacity: 0.95;
+  }
+  100% {
+    transform: translateY(105vh) translateX(-70px);
+    opacity: 0;
+  }
+}
+
+@keyframes rainRipple {
+  0% {
+    transform: scale(0.2);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(2.8);
+    opacity: 0;
+  }
+}
+
+@keyframes cloudDriftSlow {
+  0% {
+    transform: translateX(-35%);
+  }
+  50% {
+    transform: translateX(15%);
+  }
+  100% {
+    transform: translateX(-35%);
+  }
+}
+
+@keyframes cloudDriftFast {
+  0% {
+    transform: translateX(25%);
+  }
+  50% {
+    transform: translateX(-25%);
+  }
+  100% {
+    transform: translateX(25%);
+  }
+}
+
+@keyframes snowDrift {
+  0% {
+    transform: translateY(-40px) translateX(0) rotate(0deg);
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.95;
+  }
+  85% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translateY(105vh) translateX(var(--drift-x, 100px)) rotate(360deg);
+    opacity: 0;
+  }
+}
+
+@keyframes sunRotate {
+  0% {
+    transform: rotate(0deg) scale(1);
+  }
+  50% {
+    transform: rotate(180deg) scale(1.18);
+  }
+  100% {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+@keyframes particleRise {
+  0% {
+    transform: translateY(105vh) translateX(0) scale(0.5);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translateY(-10vh) translateX(var(--drift-x, 60px)) scale(1.4);
+    opacity: 0;
+  }
+}
+
+@keyframes petalDrift {
+  0% {
+    transform: translateY(-30px) translateX(0) rotate(0deg);
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.95;
+  }
+  85% {
+    opacity: 0.85;
+  }
+  100% {
+    transform: translateY(105vh) translateX(var(--drift-x, 90px)) rotate(480deg);
+    opacity: 0;
+  }
+}
+
+@keyframes flowerSnowFall {
+  0% {
+    transform: translateY(-40px) translateX(0) rotate(0deg) scale(0.85);
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.98;
+  }
+  85% {
+    opacity: 0.92;
+  }
+  100% {
+    transform: translateY(105vh) translateX(var(--drift-x, 80px)) rotate(540deg) scale(1.05);
+    opacity: 0;
+  }
+}
+
+@keyframes starTwinkle {
+  0%, 100% {
+    opacity: 0.2;
+    transform: scale(0.6);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.6);
+    filter: drop-shadow(0 0 8px rgba(255, 255, 255, 1));
+  }
+}
+
+@keyframes waveRoll {
+  0% {
+    transform: translateX(0) translateZ(0) scaleY(1);
+  }
+  50% {
+    transform: translateX(-25%) translateZ(0) scaleY(1.3);
+  }
+  100% {
+    transform: translateX(-50%) translateZ(0) scaleY(1);
+  }
+}
+
+@keyframes breatheLoop {
+  0%, 100% {
+    transform: scale(0.8);
+    opacity: 0.4;
+  }
+  50% {
+    transform: scale(1.35);
+    opacity: 0.9;
+  }
+}
+
+@keyframes lightningFlash {
+  0%, 93%, 97%, 100% {
+    opacity: 0;
+  }
+  94%, 96% {
+    opacity: 0.6;
+  }
+}
+
+.animate-gradient-flow {
+  background-size: 300% 300%;
+  animation: gradientFlow 10s ease infinite;
+}
+
+.animate-float-orb-1 {
+  animation: floatOrb1 8s ease-in-out infinite alternate;
+}
+
+.animate-float-orb-2 {
+  animation: floatOrb2 10s ease-in-out infinite alternate;
+}
+
+.animate-float-orb-3 {
+  animation: floatOrb3 7s ease-in-out infinite alternate;
+}
+
+.animate-float-orb-4 {
+  animation: floatOrb4 9s ease-in-out infinite alternate;
+}
+
+.animate-sun-rotate {
+  animation: sunRotate 16s linear infinite;
+}
+
+.animate-breathe-loop {
+  animation: breatheLoop 4.5s ease-in-out infinite;
+}
+
+.animate-wave-roll {
+  animation: waveRoll 8s linear infinite;
+}
+
+.animate-cloud-drift-1 {
+  animation: cloudDriftSlow 16s ease-in-out infinite;
+}
+
+.animate-cloud-drift-2 {
+  animation: cloudDriftFast 11s ease-in-out infinite;
+}
+
+@keyframes spinSlow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-spin-slow {
+  animation: spinSlow 8s linear infinite;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out forwards;
+}
+
+.animate-lightning {
+  animation: lightningFlash 6s ease-in-out infinite;
+}
+
+/* Reflection Universe Celestial Keyframes */
+@keyframes starTwinkle {
+  0%, 100% {
+    opacity: 0.3;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 0.95;
+    transform: scale(1.15);
+  }
+}
+
+@keyframes celestialPulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.22;
+  }
+  50% {
+    transform: scale(1.25);
+    opacity: 0.45;
+  }
+}
+
+@keyframes nebulaDrift {
+  0%, 100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(10px, -8px) scale(1.05);
+  }
+}
+
+.animate-star-twinkle {
+  animation: starTwinkle 3.5s ease-in-out infinite;
+}
+
+.animate-celestial-pulse {
+  animation: celestialPulse 2.8s ease-in-out infinite;
+}
+
+.animate-nebula-drift {
+  animation: nebulaDrift 14s ease-in-out infinite;
+}
+

@@ -1,0 +1,6 @@
+{
+  "name": "Inner Sanctum",
+  "description": "A private, editorial AI-augmented sanctuary for your deepest thoughts and reflections.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
