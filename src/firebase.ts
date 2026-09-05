@@ -12,6 +12,7 @@ import {
   collection, 
   doc, 
   getDoc,
+  getDocFromServer,
   setDoc, 
   deleteDoc, 
   getDocs,
@@ -425,6 +426,111 @@ export async function softDeleteJournalEntryInFirestore(
     },
     { merge: true }
   );
+}
+
+/**
+ * Live Firestore Diagnostic Runner:
+ * Queries the cloud Firestore server directly (bypassing cache) to retrieve:
+ * 1. Target document data and isDeleted flag
+ * 2. Nested /messages subcollection documents
+ * 3. All document IDs in /users/{userId}/entries to verify or detect orphan/ghost documents.
+ */
+export async function runFirestoreRuntimeDiagnostic(
+  userId: string,
+  targetDateKey: string,
+  eventName: string = 'diagnostic_check'
+): Promise<any> {
+  if (!userId || !targetDateKey) return null;
+
+  try {
+    const targetDocRef = doc(db, 'users', userId, 'entries', targetDateKey);
+    let targetSnap: any = null;
+    try {
+      targetSnap = await getDocFromServer(targetDocRef);
+    } catch {
+      targetSnap = await getDoc(targetDocRef);
+    }
+
+    let targetData: any = null;
+    if (targetSnap && targetSnap.exists()) {
+      const raw = targetSnap.data();
+      const { embedding, ...rest } = raw;
+      targetData = {
+        ...rest,
+        embeddingDimensions: Array.isArray(embedding) ? embedding.length : 0,
+      };
+    }
+
+    // Subcollection messages
+    const messagesRef = collection(db, 'users', userId, 'entries', targetDateKey, 'messages');
+    const messagesSnap = await getDocs(messagesRef);
+    const messages = messagesSnap.docs.map((d) => {
+      const data = d.data();
+      const { embedding, ...rest } = data;
+      return {
+        id: d.id,
+        ...rest,
+        ...(Array.isArray(embedding) ? { embeddingDimensions: embedding.length } : {}),
+      };
+    });
+
+    // All entries in /users/{userId}/entries
+    const allEntriesRef = collection(db, 'users', userId, 'entries');
+    const allEntriesSnap = await getDocs(allEntriesRef);
+    const allDocs = allEntriesSnap.docs.map((d) => {
+      const data = d.data();
+      return {
+        id: d.id,
+        date: data.date,
+        title: data.title,
+        isDeleted: data.isDeleted === true,
+        deletedAt: data.deletedAt || null,
+        turnsCount: Array.isArray(data.turns) ? data.turns.length : 0,
+        updatedAt: data.updatedAt,
+      };
+    });
+
+    const report = {
+      timestamp: new Date().toISOString(),
+      event: eventName,
+      userId,
+      targetDateKey,
+      documentPath: `users/${userId}/entries/${targetDateKey}`,
+      targetDocExists: targetSnap ? targetSnap.exists() : false,
+      targetDocData: targetData,
+      messagesSubcollectionPath: `users/${userId}/entries/${targetDateKey}/messages`,
+      messagesCount: messages.length,
+      messages,
+      totalEntriesInCollection: allDocs.length,
+      allExistingDocuments: allDocs,
+    };
+
+    console.log(
+      `%c[LIVE FIRESTORE DIAGNOSTIC: ${eventName}]`,
+      'color: #00ffff; font-weight: bold;',
+      {
+        event: eventName,
+        targetDateKey,
+        targetDocExists: Boolean(targetSnap?.exists()),
+        isDeleted: targetData?.isDeleted,
+        embeddingDimensions: targetData?.embeddingDimensions ?? 0,
+        messagesCount: messages.length,
+        totalEntriesInCollection: allDocs.length,
+      }
+    );
+
+    // Persist to backend server so agent can inspect it immediately
+    fetch('/api/diagnostics/record', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(report),
+    }).catch(() => {});
+
+    return report;
+  } catch (err) {
+    console.error('[runFirestoreRuntimeDiagnostic error]:', err);
+    return null;
+  }
 }
 
 /**

@@ -26,6 +26,24 @@ const PORT = 3000;
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
+// Live Firestore diagnostic logging endpoint
+app.post('/api/diagnostics/record', (req, res) => {
+  try {
+    const report = req.body || {};
+    const logPath = path.join(process.cwd(), 'live-firestore-diagnostic.json');
+    fs.writeFileSync(logPath, JSON.stringify(report, null, 2));
+    const targetDoc = report.targetDocData;
+    const embedDim = targetDoc?.embeddingDimensions ?? (Array.isArray(targetDoc?.embedding) ? targetDoc.embedding.length : 0);
+    console.log(
+      `[FIRESTORE DIAGNOSTIC: ${report.event || 'unknown'}] Doc: ${report.targetDateKey || report.documentPath}, Exists: ${report.targetDocExists}, isDeleted: ${targetDoc?.isDeleted ?? false}, Embedding Dimensions: ${embedDim}, Messages: ${report.messagesCount || 0}`
+    );
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error('[Diagnostic record error]:', err);
+    res.status(500).json({ error: err?.message });
+  }
+});
+
 // -------------------------------------------------------------
 // Startup Secret Validation (Fail-Fast)
 // Validates all required secrets at startup and refuses to boot
@@ -75,7 +93,51 @@ const MODEL_FALLBACK_LADDER = [
 ];
 
 // Embedding Models Fallback Ladder
-const EMBEDDING_MODELS = ['gemini-embedding-2-preview', 'text-embedding-004'];
+const EMBEDDING_MODELS = ['gemini-embedding-2-preview'];
+
+// -------------------------------------------------------------
+// Model Circuit-Breaker / Cooldown Tracker for Quota (429) & Server (503)
+// -------------------------------------------------------------
+const modelCooldownMap = new Map<string, number>();
+
+function isModelInCooldown(model: string): boolean {
+  const until = modelCooldownMap.get(model);
+  if (!until) return false;
+  if (Date.now() < until) return true;
+  modelCooldownMap.delete(model);
+  return false;
+}
+
+function recordModelCooldown(model: string, err: any): number {
+  let cooldownSec = 60;
+  const msg = String(err?.message || '');
+  const details = err?.details || [];
+
+  let retryInfoDelay: string | undefined;
+  if (Array.isArray(details)) {
+    const retryInfo = details.find((d: any) => d?.['@type']?.includes('RetryInfo'));
+    if (retryInfo?.retryDelay) {
+      retryInfoDelay = retryInfo.retryDelay;
+    }
+  }
+
+  if (retryInfoDelay) {
+    const sec = parseInt(retryInfoDelay.replace(/[^0-9]/g, ''), 10);
+    if (!isNaN(sec) && sec > 0) cooldownSec = sec;
+  } else {
+    const match = msg.match(/retry in ([0-9.]+)s/i);
+    if (match && match[1]) {
+      const parsed = Math.ceil(parseFloat(match[1]));
+      if (!isNaN(parsed) && parsed > 0) cooldownSec = parsed;
+    } else if (msg.includes('quota') || msg.includes('Quota exceeded') || msg.includes('RESOURCE_EXHAUSTED')) {
+      cooldownSec = 300; // 5 minutes cooldown for daily/bucket quota exhaustion
+    }
+  }
+
+  const finalSec = Math.max(10, Math.min(cooldownSec, 900));
+  modelCooldownMap.set(model, Date.now() + finalSec * 1000);
+  return finalSec;
+}
 
 // -------------------------------------------------------------
 // Spotify Music Tool Declarations & Curated Zero-Fail Catalog
@@ -725,7 +787,15 @@ async function generateContentWithFallback(
   const ai = getGeminiClient();
   let lastError: Error | unknown = null;
 
-  for (const model of MODEL_FALLBACK_LADDER) {
+  // Filter out any models currently in active circuit-breaker cooldown
+  let candidates = MODEL_FALLBACK_LADDER.filter((m) => !isModelInCooldown(m));
+  if (candidates.length === 0) {
+    console.log('[Gemini Fallback] All ladder models were in circuit-breaker cooldown; resetting to retry.');
+    modelCooldownMap.clear();
+    candidates = [...MODEL_FALLBACK_LADDER];
+  }
+
+  for (const model of candidates) {
     try {
       console.log(`[Gemini API] Attempting generation with model: ${model}`);
       const response = await ai.models.generateContent({
@@ -754,7 +824,24 @@ async function generateContentWithFallback(
         };
       }
     } catch (err: any) {
-      console.warn(`[Gemini API] Model ${model} failed:`, err?.message || err);
+      const errMsg = String(err?.message || err);
+      const isRateLimit = errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || err?.status === 429;
+      const isUnavailable = errMsg.includes('503') || errMsg.includes('UNAVAILABLE') || err?.status === 503;
+      const isNotFound = errMsg.includes('404') || errMsg.includes('NOT_FOUND') || err?.status === 404;
+
+      if (isRateLimit) {
+        const cd = recordModelCooldown(model, err);
+        console.log(`[Gemini Fallback] Model "${model}" hit 429 quota/rate limit. Activated circuit breaker for ${cd}s; smoothly falling over to next model in ladder.`);
+      } else if (isUnavailable) {
+        const cd = recordModelCooldown(model, err);
+        console.log(`[Gemini Fallback] Model "${model}" is temporarily unavailable (503). Activated circuit breaker for ${cd}s; smoothly falling over to next model in ladder.`);
+      } else if (isNotFound) {
+        modelCooldownMap.set(model, Date.now() + 3600 * 1000);
+        console.log(`[Gemini Fallback] Model "${model}" is not available (404). Smoothly falling over to next model in ladder.`);
+      } else {
+        console.log(`[Gemini Fallback] Model "${model}" encountered error. Smoothly falling over to next model in ladder.`);
+      }
+
       lastError = err;
       // Recoverable error conditions: sequentially attempt the next model in the fallback chain
       continue;
@@ -802,7 +889,7 @@ async function generateEmbeddingWithFallback(
         return { embedding: values, modelUsed: model };
       }
     } catch (err: any) {
-      console.warn(`[Gemini Embedding] Model ${model} failed:`, err?.message || err);
+      console.log(`[Gemini Embedding] Model ${model} failed, attempting next model in ladder.`);
       lastError = err;
     }
   }
@@ -849,24 +936,183 @@ app.get('/api/health', handleHealthCheck);
 app.get('/health', handleHealthCheck);
 
 /**
+ * Common timezone to location coordinate dictionary
+ * Used when browser geolocation is denied or unavailable to provide
+ * accurate local weather and celestial day/night status based on the user's timezone.
+ */
+const TIMEZONE_LOCATIONS: Record<string, { lat: number; lon: number; city: string }> = {
+  // India & South Asia
+  'Asia/Kolkata': { lat: 28.6139, lon: 77.2090, city: 'New Delhi, India' },
+  'Asia/Calcutta': { lat: 28.6139, lon: 77.2090, city: 'New Delhi, India' },
+  'Asia/Colombo': { lat: 6.9271, lon: 79.8612, city: 'Colombo, Sri Lanka' },
+  'Asia/Dhaka': { lat: 23.8103, lon: 90.4125, city: 'Dhaka, Bangladesh' },
+  'Asia/Kathmandu': { lat: 27.7172, lon: 85.3240, city: 'Kathmandu, Nepal' },
+  'Asia/Karachi': { lat: 24.8607, lon: 67.0011, city: 'Karachi, Pakistan' },
+  // East & Southeast Asia
+  'Asia/Singapore': { lat: 1.3521, lon: 103.8198, city: 'Singapore' },
+  'Asia/Tokyo': { lat: 35.6762, lon: 139.6503, city: 'Tokyo, Japan' },
+  'Asia/Hong_Kong': { lat: 22.3193, lon: 114.1694, city: 'Hong Kong' },
+  'Asia/Seoul': { lat: 37.5665, lon: 126.9780, city: 'Seoul, South Korea' },
+  'Asia/Shanghai': { lat: 31.2304, lon: 121.4737, city: 'Shanghai, China' },
+  'Asia/Chongqing': { lat: 29.5630, lon: 106.5516, city: 'Chongqing, China' },
+  'Asia/Bangkok': { lat: 13.7563, lon: 100.5018, city: 'Bangkok, Thailand' },
+  'Asia/Jakarta': { lat: -6.2088, lon: 106.8456, city: 'Jakarta, Indonesia' },
+  'Asia/Manila': { lat: 14.5995, lon: 120.9842, city: 'Manila, Philippines' },
+  'Asia/Kuala_Lumpur': { lat: 3.1390, lon: 101.6869, city: 'Kuala Lumpur, Malaysia' },
+  'Asia/Taipei': { lat: 25.0330, lon: 121.5654, city: 'Taipei, Taiwan' },
+  'Asia/Dubai': { lat: 25.2048, lon: 55.2708, city: 'Dubai, UAE' },
+  'Asia/Riyadh': { lat: 24.7136, lon: 46.6753, city: 'Riyadh, Saudi Arabia' },
+  // Europe
+  'Europe/London': { lat: 51.5074, lon: -0.1278, city: 'London, UK' },
+  'Europe/Paris': { lat: 48.8566, lon: 2.3522, city: 'Paris, France' },
+  'Europe/Berlin': { lat: 52.5200, lon: 13.4050, city: 'Berlin, Germany' },
+  'Europe/Amsterdam': { lat: 52.3676, lon: 4.9041, city: 'Amsterdam, Netherlands' },
+  'Europe/Rome': { lat: 41.9028, lon: 12.4964, city: 'Rome, Italy' },
+  'Europe/Madrid': { lat: 40.4168, lon: -3.7038, city: 'Madrid, Spain' },
+  'Europe/Zurich': { lat: 47.3769, lon: 8.5417, city: 'Zurich, Switzerland' },
+  'Europe/Vienna': { lat: 48.2082, lon: 16.3738, city: 'Vienna, Austria' },
+  'Europe/Dublin': { lat: 53.3498, lon: -6.2603, city: 'Dublin, Ireland' },
+  'Europe/Stockholm': { lat: 59.3293, lon: 18.0686, city: 'Stockholm, Sweden' },
+  'Europe/Oslo': { lat: 59.9139, lon: 10.7522, city: 'Oslo, Norway' },
+  'Europe/Helsinki': { lat: 60.1699, lon: 24.9384, city: 'Helsinki, Finland' },
+  'Europe/Warsaw': { lat: 52.2297, lon: 21.0122, city: 'Warsaw, Poland' },
+  'Europe/Prague': { lat: 50.0755, lon: 14.4378, city: 'Prague, Czechia' },
+  'Europe/Athens': { lat: 37.9838, lon: 23.7275, city: 'Athens, Greece' },
+  'Europe/Istanbul': { lat: 41.0082, lon: 28.9784, city: 'Istanbul, Turkey' },
+  // Americas
+  'America/New_York': { lat: 40.7128, lon: -74.0060, city: 'New York, US' },
+  'America/Chicago': { lat: 41.8781, lon: -87.6298, city: 'Chicago, US' },
+  'America/Denver': { lat: 39.7392, lon: -104.9903, city: 'Denver, US' },
+  'America/Los_Angeles': { lat: 34.0522, lon: -118.2437, city: 'Los Angeles, US' },
+  'America/Phoenix': { lat: 33.4484, lon: -112.0740, city: 'Phoenix, US' },
+  'America/Toronto': { lat: 43.6532, lon: -79.3832, city: 'Toronto, Canada' },
+  'America/Vancouver': { lat: 49.2827, lon: -123.1207, city: 'Vancouver, Canada' },
+  'America/Montreal': { lat: 45.5017, lon: -73.5673, city: 'Montreal, Canada' },
+  'America/Sao_Paulo': { lat: -23.5505, lon: -46.6333, city: 'São Paulo, Brazil' },
+  'America/Buenos_Aires': { lat: -34.6037, lon: -58.3816, city: 'Buenos Aires, Argentina' },
+  'America/Mexico_City': { lat: 19.4326, lon: -99.1332, city: 'Mexico City, Mexico' },
+  // Oceania
+  'Australia/Sydney': { lat: -33.8688, lon: 151.2093, city: 'Sydney, Australia' },
+  'Australia/Melbourne': { lat: -37.8136, lon: 144.9631, city: 'Melbourne, Australia' },
+  'Australia/Brisbane': { lat: -27.4698, lon: 153.0251, city: 'Brisbane, Australia' },
+  'Australia/Perth': { lat: -31.9505, lon: 115.8605, city: 'Perth, Australia' },
+  'Pacific/Auckland': { lat: -36.8485, lon: 174.7633, city: 'Auckland, New Zealand' },
+  // Africa
+  'Africa/Johannesburg': { lat: -26.2041, lon: 28.0473, city: 'Johannesburg, South Africa' },
+  'Africa/Cairo': { lat: 30.0444, lon: 31.2357, city: 'Cairo, Egypt' },
+  'Africa/Nairobi': { lat: -1.2921, lon: 36.8219, city: 'Nairobi, Kenya' },
+};
+
+/**
+ * Calculates whether it is currently daytime in a specified IANA timezone.
+ * Uses 06:00 to 19:00 as local daytime bounds.
+ */
+function isDaytimeInTz(tz: string): boolean {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      hour: 'numeric',
+      hour12: false,
+      timeZone: tz,
+    });
+    const hour = parseInt(formatter.format(new Date()), 10);
+    return hour >= 6 && hour < 19;
+  } catch {
+    const utcHour = new Date().getUTCHours();
+    return utcHour >= 6 && utcHour < 18;
+  }
+}
+
+/**
  * Weather Proxy Endpoint (Secure Server-Side Retrieval)
- * Resolves current weather via keyless Open-Meteo API
+ * Resolves current weather via keyless Open-Meteo API with location awareness,
+ * reverse geocoding for human-readable city labels, and timezone fallback.
  */
 app.get('/api/weather', async (req, res) => {
+  let safeTz = 'UTC';
+  let resolvedCity = 'Local Area';
+  let locationSource: 'gps' | 'timezone' | 'ip' | 'fallback' = 'fallback';
+
   try {
-    const lat = typeof req.query.lat === 'string' ? parseFloat(req.query.lat) : 37.7749;
-    const lon = typeof req.query.lon === 'string' ? parseFloat(req.query.lon) : -122.4194;
-    const rawCity = typeof req.query.city === 'string' ? req.query.city : 'Local Area';
-    const city = rawCity.slice(0, INPUT_LIMITS.MAX_CITY_LENGTH);
+    // 1. Sanitize timezone input
+    const rawTz = typeof req.query.tz === 'string' ? req.query.tz.trim() : '';
+    if (rawTz && /^[A-Za-z0-9_\-+/]+$/.test(rawTz) && rawTz.length <= 60) {
+      safeTz = rawTz;
+    }
 
-    // Safe bounds check
-    const safeLat = isNaN(lat) || lat < -90 || lat > 90 ? 37.7749 : lat;
-    const safeLon = isNaN(lon) || lon < -180 || lon > 180 ? -122.4194 : lon;
+    // 2. Check if valid GPS coordinates were passed by the browser
+    const rawLat = typeof req.query.lat === 'string' ? parseFloat(req.query.lat) : NaN;
+    const rawLon = typeof req.query.lon === 'string' ? parseFloat(req.query.lon) : NaN;
+    const hasGpsCoords = !isNaN(rawLat) && !isNaN(rawLon) && rawLat >= -90 && rawLat <= 90 && rawLon >= -180 && rawLon <= 180;
 
-    const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${safeLat}&longitude=${safeLon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,rain,weather_code,wind_speed_10m&timezone=auto`;
+    let targetLat: number;
+    let targetLon: number;
+
+    if (hasGpsCoords) {
+      targetLat = rawLat;
+      targetLon = rawLon;
+      locationSource = 'gps';
+
+      // Reverse geocode via OpenStreetMap Nominatim to resolve human-readable city name
+      const customCity = typeof req.query.city === 'string' ? req.query.city.trim().slice(0, INPUT_LIMITS.MAX_CITY_LENGTH) : '';
+      if (customCity) {
+        resolvedCity = customCity;
+      } else {
+        try {
+          const geoUrl = `https://nominatim.openstreetmap.org/reverse?lat=${targetLat}&lon=${targetLon}&format=json&zoom=10`;
+          const geoRes = await fetch(geoUrl, {
+            headers: { 'User-Agent': 'InnerSanctumApp/1.0' },
+            signal: AbortSignal.timeout(2500),
+          });
+          if (geoRes.ok) {
+            const geoData: any = await geoRes.json();
+            const addr = geoData.address || {};
+            const locality = addr.city || addr.town || addr.village || addr.municipality || addr.city_district || addr.suburb || geoData.name || '';
+            const country = addr.country || '';
+            if (locality && country) {
+              resolvedCity = `${locality}, ${country}`;
+            } else if (locality) {
+              resolvedCity = locality;
+            } else if (country) {
+              resolvedCity = country;
+            }
+          }
+        } catch {
+          // Nominatim timeout or error; fallback will derive from timezone or coords
+        }
+      }
+
+      if (!resolvedCity || resolvedCity === 'Local Area') {
+        const tzCity = safeTz.includes('/') ? safeTz.split('/')[1].replace(/_/g, ' ') : '';
+        resolvedCity = tzCity ? `${tzCity}` : `${targetLat.toFixed(2)}°, ${targetLon.toFixed(2)}°`;
+      }
+    } else {
+      // 3. Fallback: Browser denied geolocation or coords unavailable.
+      // Use the client's browser timezone to look up regional coordinates.
+      locationSource = 'timezone';
+      const tzMatch = TIMEZONE_LOCATIONS[safeTz];
+      if (tzMatch) {
+        targetLat = tzMatch.lat;
+        targetLon = tzMatch.lon;
+        resolvedCity = tzMatch.city;
+      } else {
+        // Derive name from timezone string (e.g. 'Asia/Kolkata' -> 'Kolkata')
+        const tzParts = safeTz.split('/');
+        const fallbackCity = tzParts.length > 1 ? tzParts[1].replace(/_/g, ' ') : safeTz;
+        resolvedCity = fallbackCity;
+        // Default to a neutral coordinate centered for the region or standard
+        targetLat = 20.0;
+        targetLon = 0.0;
+      }
+    }
+
+    // 4. Determine day/night state based on the user's actual timezone as ground truth
+    const localDaytimeEstimate = isDaytimeInTz(safeTz);
+
+    // 5. Query Open-Meteo for astronomical solar elevation and live weather
+    const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${targetLat}&longitude=${targetLon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,rain,weather_code,wind_speed_10m&timezone=auto`;
 
     const weatherResponse = await fetch(weatherUrl, {
-      headers: { 'User-Agent': 'GeminiReflectionsApp/1.0' },
+      headers: { 'User-Agent': 'InnerSanctumApp/1.0' },
       signal: AbortSignal.timeout(4000),
     });
 
@@ -877,9 +1123,12 @@ app.get('/api/weather', async (req, res) => {
     const data = await weatherResponse.json();
     const current = data.current || {};
     const code = Number(current.weather_code ?? 0);
-    const tempC = Math.round(Number(current.temperature_2m ?? 20));
+    const tempC = Math.round(Number(current.temperature_2m ?? 24));
     const tempF = Math.round((tempC * 9) / 5 + 32);
-    const isDay = current.is_day !== 0;
+
+    // Open-Meteo calculates is_day (0 or 1) based on solar elevation at the exact coordinates!
+    // If undefined in response, use our local timezone daytime calculation.
+    const isDay = current.is_day !== undefined ? current.is_day === 1 : localDaytimeEstimate;
 
     // Map WMO weather codes to ambient themes
     let condition: 'clear' | 'clouds' | 'rain' | 'drizzle' | 'snow' | 'thunderstorm' | 'fog' | 'windy' = 'clear';
@@ -924,20 +1173,25 @@ app.get('/api/weather', async (req, res) => {
       temperatureC: tempC,
       temperatureF: tempF,
       isDay,
-      city,
+      city: resolvedCity,
+      source: locationSource,
+      timezone: safeTz,
       timestamp: new Date().toISOString(),
     });
   } catch (error: any) {
-    console.warn('[Weather API Proxy] Graceful fallback to default weather:', error?.message || error);
+    console.warn('[Weather API Proxy] Graceful fallback to timezone-derived weather:', error?.message || error);
+    const localDaytime = isDaytimeInTz(safeTz);
     return res.json({
       success: true,
       condition: 'clear',
-      label: 'Peaceful Skies',
-      icon: '🌤️',
-      temperatureC: 21,
-      temperatureF: 70,
-      isDay: true,
-      city: 'Local Area',
+      label: localDaytime ? 'Peaceful Sunlit Skies' : 'Peaceful Starlit Night',
+      icon: localDaytime ? '🌤️' : '🌙',
+      temperatureC: 24,
+      temperatureF: 75,
+      isDay: localDaytime,
+      city: resolvedCity || 'Local Skies',
+      source: locationSource,
+      timezone: safeTz,
       timestamp: new Date().toISOString(),
       fallback: true,
     });
@@ -1364,7 +1618,7 @@ RAG CONTEXT GUIDELINES:
 
     try {
       const parsed = JSON.parse(cleaned);
-      reply = parsed.reply || '';
+      reply = typeof parsed.reply === 'string' ? parsed.reply : '';
       if (validMoods.includes(parsed.detectedMood)) {
         detectedMood = parsed.detectedMood;
       }
@@ -1375,31 +1629,61 @@ RAG CONTEXT GUIDELINES:
         suggestedPrompts = parsed.suggestedPrompts;
       }
     } catch {
-      // In case JSON parse failed, extract reply as cleaned text and run heuristic sentiment check
-      reply = cleaned;
-      const recentUserText = turns
-        .filter((t: any) => t.role === 'user')
-        .slice(-2)
-        .map((t: any) => t.content.toLowerCase())
-        .join(' ');
+      // In case JSON parse failed, extract the "reply" string specifically rather than leaking raw JSON
+      const replyMatch = cleaned.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+      if (replyMatch && replyMatch[1]) {
+        try {
+          reply = JSON.parse(`"${replyMatch[1]}"`);
+        } catch {
+          reply = replyMatch[1];
+        }
+      } else {
+        const multiLineMatch = cleaned.match(/"reply"\s*:\s*"([\s\S]*?)"(?:\s*,\s*"[a-zA-Z0-9_]+"\s*:|\s*\}|\s*$)/);
+        if (multiLineMatch && multiLineMatch[1]) {
+          reply = multiLineMatch[1];
+        } else {
+          // If no "reply" key matched, remove codeblock or outer brackets if present
+          reply = cleaned.replace(/^[^{]*\{\s*"reply"\s*:\s*"?/, '').replace(/"?\s*\}\s*$/, '');
+        }
+      }
 
-      if (/(anxious|anxiety|nervous|worry|worried|stress|stressed|panic|scared|dread|fear)/i.test(recentUserText)) {
-        detectedMood = 'anxious';
-        moodReason = 'Detected anxiety and stress from recent words';
-      } else if (/(overwhelm|overwhelmed|too much|exhausted|burnout|drowning|can't keep up)/i.test(recentUserText)) {
-        detectedMood = 'overwhelmed';
-        moodReason = 'Detected feeling overwhelmed and cognitive fatigue';
-      } else if (/(excited|energized|pumped|thrilled|passionate|can't wait|happy|joy)/i.test(recentUserText)) {
-        detectedMood = 'energized';
-        moodReason = 'Detected excitement and vibrant energy';
-      } else if (/(calm|peace|serene|grateful|thankful|relaxed|stillness|grounded)/i.test(recentUserText)) {
-        detectedMood = 'peaceful';
-        moodReason = 'Detected peaceful calm and gratitude';
-      } else if (/(motivated|ready|determined|focus|goal|achieve|execute|action)/i.test(recentUserText)) {
-        detectedMood = 'motivated';
-        moodReason = 'Detected determination and goal focus';
+      // Check for detectedMood in raw text if present
+      const moodMatch = cleaned.match(/"detectedMood"\s*:\s*"([a-zA-Z]+)"/);
+      if (moodMatch && validMoods.includes(moodMatch[1])) {
+        detectedMood = moodMatch[1] as any;
+      } else {
+        const recentUserText = turns
+          .filter((t: any) => t.role === 'user')
+          .slice(-2)
+          .map((t: any) => t.content.toLowerCase())
+          .join(' ');
+
+        if (/(anxious|anxiety|nervous|worry|worried|stress|stressed|panic|scared|dread|fear)/i.test(recentUserText)) {
+          detectedMood = 'anxious';
+          moodReason = 'Detected anxiety and stress from recent words';
+        } else if (/(overwhelm|overwhelmed|too much|exhausted|burnout|drowning|can't keep up)/i.test(recentUserText)) {
+          detectedMood = 'overwhelmed';
+          moodReason = 'Detected feeling overwhelmed and cognitive fatigue';
+        } else if (/(excited|energized|pumped|thrilled|passionate|can't wait|happy|joy)/i.test(recentUserText)) {
+          detectedMood = 'energized';
+          moodReason = 'Detected excitement and vibrant energy';
+        } else if (/(calm|peace|serene|grateful|thankful|relaxed|stillness|grounded)/i.test(recentUserText)) {
+          detectedMood = 'peaceful';
+          moodReason = 'Detected peaceful calm and gratitude';
+        } else if (/(motivated|ready|determined|focus|goal|achieve|execute|action)/i.test(recentUserText)) {
+          detectedMood = 'motivated';
+          moodReason = 'Detected determination and goal focus';
+        }
       }
     }
+
+    // Convert any literal escaped newlines or quotes into true formatting
+    reply = (reply || '')
+      .replace(/\\r\\n/g, '\n')
+      .replace(/\\n/g, '\n')
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, '\\')
+      .trim();
 
     if (suggestedPrompts.length === 0) {
       if (detectedMood === 'anxious' || detectedMood === 'overwhelmed') {

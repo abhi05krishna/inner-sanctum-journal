@@ -35,6 +35,7 @@ import { AnimatedBackground } from './AnimatedBackground';
 import { SpotifyMusicCard } from './SpotifyMusicCard';
 import { ShareableCardModal } from './ShareableCardModal';
 import { extractErrorMessage } from '../utils/errors';
+import { extractCleanReply, stripMarkdownAndMediaLinks } from '../utils/cardExcerpt';
 
 interface JournalEditorProps {
   entry: JournalEntry;
@@ -135,6 +136,14 @@ export const JournalEditor: React.FC<JournalEditorProps> = ({
     oldMood?: MoodType;
     reason?: string;
   } | null>(null);
+
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Voice Input (Web Speech API)
   const isSpeechSupported = useMemo(() => {
@@ -251,7 +260,9 @@ export const JournalEditor: React.FC<JournalEditorProps> = ({
   }, []);
 
   const handleShareTurn = (content: string) => {
-    setShareExcerpt(content);
+    // Ensure content is cleanly parsed before passing to the Shareable Reflection Card modal
+    const clean = extractCleanReply(content);
+    setShareExcerpt(clean);
     setIsShareModalOpen(true);
   };
 
@@ -306,7 +317,7 @@ export const JournalEditor: React.FC<JournalEditorProps> = ({
       }
 
       const data = await res.json();
-      if (Array.isArray(data.embedding) && data.embedding.length > 0) {
+      if (isMountedRef.current && Array.isArray(data.embedding) && data.embedding.length > 0) {
         onUpdateEntry({
           ...targetEntry,
           embedding: data.embedding,
@@ -347,7 +358,7 @@ export const JournalEditor: React.FC<JournalEditorProps> = ({
 
       if (!res.ok) return;
       const data = await res.json();
-      if (data?.mood && data.mood !== currentMood) {
+      if (isMountedRef.current && data?.mood && data.mood !== currentMood) {
         const prevMood = currentMood || entry.mood;
         onUpdateEntry({
           ...entry,
@@ -558,10 +569,12 @@ export const JournalEditor: React.FC<JournalEditorProps> = ({
 
       const data = await response.json();
 
+      const cleanReply = extractCleanReply(data.reply) || 'I hear you. Let us explore this deeper.';
+
       const geminiTurn: JournalTurn = {
         id: `turn-gemini-${Date.now()}`,
         role: 'gemini',
-        content: data.reply || 'I hear you. Let us explore this deeper.',
+        content: cleanReply,
         timestamp: new Date().toISOString(),
         musicSuggestion: data.musicSuggestion || undefined,
         retrievedPastEntries: Array.isArray(data.retrievedPastEntries) ? data.retrievedPastEntries : undefined,
@@ -615,7 +628,7 @@ export const JournalEditor: React.FC<JournalEditorProps> = ({
       driver={activeDriver}
       mood={entry.mood || 'peaceful'}
       weather={weatherData}
-      showIndicatorBadge={false}
+      showIndicatorBadge={true}
       onToggleDriver={onToggleDriver}
     >
       <div className="flex-1 flex flex-col h-[calc(100vh-57px)] overflow-hidden text-[#1A1A1A]">
@@ -994,7 +1007,7 @@ export const JournalEditor: React.FC<JournalEditorProps> = ({
                           <Share2 className="h-3 w-3" />
                         </button>
                         <button
-                          onClick={() => handleCopyTurn(turn.id, turn.content)}
+                          onClick={() => handleCopyTurn(turn.id, extractCleanReply(turn.content))}
                           className="inline-flex items-center gap-1 p-1 text-[#9C988B] hover:text-[#1A1A1A] rounded transition-all cursor-pointer"
                           title="Copy text"
                         >
@@ -1059,7 +1072,7 @@ export const JournalEditor: React.FC<JournalEditorProps> = ({
                           },
                         }}
                       >
-                        {turn.content}
+                        {extractCleanReply(turn.content)}
                       </Markdown>
                     </div>
                   )}

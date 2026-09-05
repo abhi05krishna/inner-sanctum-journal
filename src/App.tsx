@@ -15,6 +15,7 @@ import {
   subscribeToOrgMembers,
   updateOrgMemberLastActiveDate,
   setUserHasSeenOnboarding,
+  runFirestoreRuntimeDiagnostic,
   type User
 } from './firebase';
 import { Navbar } from './components/Navbar';
@@ -32,6 +33,7 @@ import { OrgDisclosureModal } from './components/OrgDisclosureModal';
 import { OrgAdminDashboardModal } from './components/OrgAdminDashboardModal';
 import { JoinOrgModal } from './components/JoinOrgModal';
 import { OnboardingWalkthrough } from './components/OnboardingWalkthrough';
+import { fetchCurrentWeather } from './utils/weatherService';
 import { ReflectionUniverse } from './components/ReflectionUniverse';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import type { JournalEntry, UserProfile, AppView, VisualDriverType, WeatherData, MoodType, Organization, OrgMember } from './types';
@@ -80,11 +82,10 @@ export default function App() {
   const [isOrgAdminOpen, setIsOrgAdminOpen] = useState(false);
   const [isJoinOrgOpen, setIsJoinOrgOpen] = useState(false);
 
-  // Fetch real-time weather once securely for the session
+  // Fetch real-time weather once securely for the session with location awareness
   useEffect(() => {
     let isMounted = true;
-    fetch('/api/weather')
-      .then((res) => (res.ok ? res.json() : null))
+    fetchCurrentWeather()
       .then((data) => {
         if (isMounted && data) setWeatherData(data);
       })
@@ -168,7 +169,16 @@ export default function App() {
       }
     );
 
-    return () => unsubscribe();
+    (window as any).runLiveFirestoreDiagnostic = (dateKey?: string) => {
+      const key = dateKey || formatDateKey(new Date());
+      console.log(`[Diagnostic] Triggering live Firestore query for key: ${key}...`);
+      return runFirestoreRuntimeDiagnostic(currentUser.uid, key, 'manual_window_call');
+    };
+
+    return () => {
+      delete (window as any).runLiveFirestoreDiagnostic;
+      unsubscribe();
+    };
   }, [currentUser?.uid]);
 
   // 3. Listen to user profile document to discover currentOrgId
@@ -264,32 +274,29 @@ export default function App() {
     }
   };
 
-  // Calendar Date Selection: Opens existing or initializes fresh day thread
+  // Calendar Date Selection: Opens existing active entry or initializes fresh day thread
   const handleSelectDate = (dateStr: string) => {
     if (!currentUser?.uid) return;
 
-    const existingEntry = entries.find((e) => (e.date || e.id) === dateStr);
-    if (existingEntry) {
-      setSelectedEntryId(existingEntry.id);
+    // 1. Check if an active (non-deleted) entry exists for this date
+    const existingActiveEntry = entries.find(
+      (e) => (e.date || e.id) === dateStr && !e.isDeleted
+    );
+    if (existingActiveEntry) {
+      setSelectedEntryId(existingActiveEntry.id);
       setCurrentView('editor');
       return;
     }
 
-    // Create fresh entry for clicked date
+    // 2. If the entry at that date has isDeleted: true (or no entry exists yet),
+    // open a fresh, empty new-entry state instead of loading soft-deleted content
     const newEntry = createBlankEntryForDate(currentUser.uid, dateStr);
-    setEntries((prev) => [newEntry, ...prev]);
+    setEntries((prev) => {
+      const remaining = prev.filter((e) => !((e.date || e.id) === dateStr && !e.isDeleted));
+      return [newEntry, ...remaining];
+    });
     setSelectedEntryId(dateStr);
     setCurrentView('editor');
-
-    // Persist parent doc to Firestore
-    setSyncStatus('saving');
-    saveJournalEntryToFirestore(currentUser.uid, newEntry)
-      .then(() => setSyncStatus('synced'))
-      .catch((err) => {
-        console.error('Failed to create date entry in Firestore:', err);
-        setSyncStatus('error');
-        setSyncError(err?.message || 'Failed to initialize entry for this date.');
-      });
   };
 
   // Active non-deleted reflections
@@ -330,22 +337,59 @@ export default function App() {
     if (!currentUser?.uid) return;
     const nowIso = new Date().toISOString();
 
-    // Optimistic local state update
+    // 1. Immediately cancel any debounced autosave so it cannot overwrite the soft-deletion
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+
+    // Resolve matching entry to find its actual document ID and date key
+    const target = entries.find(
+      (e) =>
+        e.id === entryId ||
+        e.date === entryId ||
+        (e.date && e.date.startsWith(entryId)) ||
+        (e.id && e.id.startsWith(entryId))
+    );
+
+    const docId = target?.id || target?.date || entryId;
+    const dateKey = target?.date || target?.id || entryId;
+
+    // Optimistic local state update across all representations
     setEntries((prev) =>
       prev.map((e) =>
-        e.id === entryId || e.date === entryId
+        e.id === docId ||
+        e.id === entryId ||
+        e.date === dateKey ||
+        e.date === entryId ||
+        (target && e === target)
           ? { ...e, isDeleted: true, deletedAt: nowIso }
           : e
       )
     );
 
-    if (selectedEntryId === entryId || (currentSelectedEntry && (currentSelectedEntry.date === entryId || currentSelectedEntry.id === entryId))) {
+    if (
+      selectedEntryId === entryId ||
+      selectedEntryId === docId ||
+      (currentSelectedEntry &&
+        (currentSelectedEntry.id === docId ||
+          currentSelectedEntry.id === entryId ||
+          currentSelectedEntry.date === dateKey ||
+          currentSelectedEntry.date === entryId))
+    ) {
       setSelectedEntryId(null);
       setCurrentView('calendar');
     }
 
     try {
-      await softDeleteJournalEntryInFirestore(currentUser.uid, entryId);
+      // Soft delete the entry in Firestore at its primary document path
+      await softDeleteJournalEntryInFirestore(currentUser.uid, docId);
+
+      // If dateKey is distinct from docId, also soft delete dateKey document to prevent orphaned stubs
+      if (dateKey && dateKey !== docId) {
+        await softDeleteJournalEntryInFirestore(currentUser.uid, dateKey).catch(() => {});
+      }
+
       setSyncStatus('synced');
     } catch (err: any) {
       console.error('Failed to soft delete reflection:', err);
@@ -358,17 +402,35 @@ export default function App() {
   const handleRestoreEntry = async (entryId: string) => {
     if (!currentUser?.uid) return;
 
+    const target = entries.find(
+      (e) =>
+        e.id === entryId ||
+        e.date === entryId ||
+        (e.date && e.date.startsWith(entryId)) ||
+        (e.id && e.id.startsWith(entryId))
+    );
+
+    const docId = target?.id || target?.date || entryId;
+    const dateKey = target?.date || target?.id || entryId;
+
     // Optimistic local state update
     setEntries((prev) =>
       prev.map((e) =>
-        e.id === entryId || e.date === entryId
+        e.id === docId ||
+        e.id === entryId ||
+        e.date === dateKey ||
+        e.date === entryId ||
+        (target && e === target)
           ? { ...e, isDeleted: false, deletedAt: undefined }
           : e
       )
     );
 
     try {
-      await restoreJournalEntryInFirestore(currentUser.uid, entryId);
+      await restoreJournalEntryInFirestore(currentUser.uid, docId);
+      if (dateKey && dateKey !== docId) {
+        await restoreJournalEntryInFirestore(currentUser.uid, dateKey).catch(() => {});
+      }
       setSyncStatus('synced');
     } catch (err: any) {
       console.error('Failed to restore reflection:', err);
@@ -381,11 +443,34 @@ export default function App() {
   const handlePermanentDeleteEntry = async (entryId: string) => {
     if (!currentUser?.uid) return;
 
+    const target = entries.find(
+      (e) =>
+        e.id === entryId ||
+        e.date === entryId ||
+        (e.date && e.date.startsWith(entryId)) ||
+        (e.id && e.id.startsWith(entryId))
+    );
+
+    const docId = target?.id || target?.date || entryId;
+    const dateKey = target?.date || target?.id || entryId;
+
     // Optimistic local delete
-    setEntries((prev) => prev.filter((e) => e.id !== entryId && e.date !== entryId));
+    setEntries((prev) =>
+      prev.filter(
+        (e) =>
+          e.id !== docId &&
+          e.id !== entryId &&
+          e.date !== dateKey &&
+          e.date !== entryId &&
+          (!target || e !== target)
+      )
+    );
 
     try {
-      await deleteJournalEntryFromFirestore(currentUser.uid, entryId);
+      await deleteJournalEntryFromFirestore(currentUser.uid, docId);
+      if (dateKey && dateKey !== docId) {
+        await deleteJournalEntryFromFirestore(currentUser.uid, dateKey).catch(() => {});
+      }
       setSyncStatus('synced');
     } catch (err: any) {
       console.error('Failed to permanently delete reflection:', err);
@@ -398,12 +483,13 @@ export default function App() {
   const handleEmptyTrash = async () => {
     if (!currentUser?.uid || deletedEntries.length === 0) return;
 
-    const idsToDelete = deletedEntries.map((e) => e.date || e.id);
+    const entriesToDelete = [...deletedEntries];
     setEntries((prev) => prev.filter((e) => !e.isDeleted));
 
     try {
-      for (const id of idsToDelete) {
-        await deleteJournalEntryFromFirestore(currentUser.uid, id);
+      for (const e of entriesToDelete) {
+        if (e.id) await deleteJournalEntryFromFirestore(currentUser.uid, e.id).catch(() => {});
+        if (e.date && e.date !== e.id) await deleteJournalEntryFromFirestore(currentUser.uid, e.date).catch(() => {});
       }
       setSyncStatus('synced');
     } catch (err: any) {
@@ -417,10 +503,19 @@ export default function App() {
   const handleUpdateEntry = (updated: JournalEntry) => {
     if (!currentUser?.uid) return;
 
-    // Local state immediate update
-    setEntries((prev) =>
-      prev.map((e) => ((e.id === updated.id || e.date === updated.date) ? updated : e))
-    );
+    // Guard: Never update an entry payload that is marked as deleted
+    if (updated.isDeleted) return;
+
+    // Local state immediate update: update active entry or add fresh entry
+    setEntries((prev) => {
+      const hasActive = prev.some((e) => (e.id === updated.id || e.date === updated.date) && !e.isDeleted);
+      if (hasActive) {
+        return prev.map((e) =>
+          ((e.id === updated.id || e.date === updated.date) && !e.isDeleted ? updated : e)
+        );
+      }
+      return [updated, ...prev];
+    });
 
     // Update member last active date asynchronously if linked to an organization
     if (currentOrgId && currentUser?.uid) {
@@ -492,10 +587,28 @@ export default function App() {
     }
   };
 
-  // Selected Entry Resolver
-  const currentSelectedEntry = entries.find(
-    (e) => e.id === selectedEntryId || e.date === selectedEntryId
-  ) || null;
+  // Selected Entry Resolver: Prioritize active non-deleted entry;
+  // If the matching entry is soft-deleted, provide a fresh blank entry so editor opens empty
+  const currentSelectedEntry = useMemo(() => {
+    if (!selectedEntryId) return null;
+
+    // Active (non-deleted) entry takes top priority
+    const activeEntry = entries.find(
+      (e) => (e.id === selectedEntryId || e.date === selectedEntryId) && !e.isDeleted
+    );
+    if (activeEntry) return activeEntry;
+
+    // If an entry exists for this date but is soft-deleted, return a fresh empty new-entry state
+    const softDeletedEntry = entries.find(
+      (e) => (e.id === selectedEntryId || e.date === selectedEntryId) && e.isDeleted
+    );
+    if (softDeletedEntry && currentUser?.uid) {
+      const dateKey = softDeletedEntry.date || softDeletedEntry.id || selectedEntryId;
+      return createBlankEntryForDate(currentUser.uid, dateKey);
+    }
+
+    return null;
+  }, [entries, selectedEntryId, currentUser?.uid, createBlankEntryForDate]);
 
   // Derive active mood dynamically from active entry or latest journal entry
   const currentMood: MoodType = useMemo(() => {

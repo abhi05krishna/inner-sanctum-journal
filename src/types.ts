@@ -146,6 +146,8 @@ export interface WeatherData {
   city: string;
   timestamp: string;
   fallback?: boolean;
+  source?: 'gps' | 'timezone' | 'ip' | 'fallback';
+  timezone?: string;
 }
 
 export type VisualDriverType = 'mood' | 'weather';

@@ -170,10 +170,12 @@ export const Navbar: React.FC<NavbarProps> = ({
                     ? 'bg-[#FAF3E1] text-[#FA8112] shadow-2xs font-bold border border-[#E5D8B8]'
                     : 'text-[#5C5549] hover:text-[#222222] hover:bg-[#FAF3E1]/60'
                 }`}
-                title="Switch to live Weather-driven visual ambiance"
+                title={weatherData ? `${weatherData.label}, ${weatherData.temperatureC}°C in ${weatherData.city}` : "Switch to live Weather-driven visual ambiance"}
               >
                 <span className="text-xs">{weatherIcon}</span>
-                <span className="hidden sm:inline">{weatherData ? weatherData.label : 'Weather'}</span>
+                <span className="hidden sm:inline">
+                  {weatherData ? `${weatherData.label}${weatherData.city ? ` (${weatherData.city.split(',')[0]})` : ''}` : 'Weather'}
+                </span>
                 <span className="sm:hidden font-medium">Weather</span>
               </button>
             </div>

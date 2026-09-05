@@ -10,9 +10,20 @@ import {
   Quote, 
   Calendar as CalendarIcon,
   Smile,
-  RefreshCw
+  RefreshCw,
+  SlidersHorizontal,
+  Bookmark
 } from 'lucide-react';
 import type { JournalEntry, MoodType } from '../types';
+import { 
+  extractCleanReply, 
+  stripMarkdownAndMediaLinks, 
+  generateCuratedPullQuote, 
+  truncateExcerptToLimit,
+  splitIntoCleanSentences, 
+  buildCuratedExcerptsList,
+  type CuratedExcerptItem 
+} from '../utils/cardExcerpt';
 
 interface ShareableCardModalProps {
   isOpen: boolean;
@@ -40,6 +51,7 @@ export const ShareableCardModal: React.FC<ShareableCardModalProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [selectedText, setSelectedText] = useState<string>('');
+  const [selectedExcerptId, setSelectedExcerptId] = useState<string>('target-pullquote');
   const [aspectRatio, setAspectRatio] = useState<'square' | 'portrait'>('square');
   const [includeDate, setIncludeDate] = useState<boolean>(true);
   const [includeMood, setIncludeMood] = useState<boolean>(true);
@@ -47,72 +59,31 @@ export const ShareableCardModal: React.FC<ShareableCardModalProps> = ({
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [isRendering, setIsRendering] = useState<boolean>(false);
 
-  // Available quote excerpts extracted from the entry
+  // Available short quote excerpts extracted from the entry and target turn
   const availableExcerpts = useMemo(() => {
-    const list: { id: string; label: string; text: string; source: 'takeaway' | 'user' | 'gemini' }[] = [];
+    return buildCuratedExcerptsList(entry, initialExcerpt);
+  }, [entry, initialExcerpt]);
 
-    // Takeaways / Summary
-    if (entry.takeaways && entry.takeaways.length > 0) {
-      entry.takeaways.forEach((t, i) => {
-        list.push({
-          id: `takeaway-${i}`,
-          label: `Key Insight #${i + 1}`,
-          text: t,
-          source: 'takeaway',
-        });
-      });
-    } else if (entry.summary) {
-      list.push({
-        id: 'summary',
-        label: 'Synthesized Summary',
-        text: entry.summary.slice(0, 240) + (entry.summary.length > 240 ? '...' : ''),
-        source: 'takeaway',
-      });
-    }
-
-    // User reflections
-    entry.turns
-      .filter((t) => t.role === 'user' && t.content.trim().length > 0)
-      .forEach((t, i) => {
-        const text = t.content.trim();
-        list.push({
-          id: `user-${t.id || i}`,
-          label: `My Reflection #${i + 1}`,
-          text: text.length > 280 ? text.slice(0, 277) + '...' : text,
-          source: 'user',
-        });
-      });
-
-    // Gemini responses
-    entry.turns
-      .filter((t) => t.role === 'gemini' && t.content.trim().length > 0)
-      .forEach((t, i) => {
-        // Strip markdown headings or quotes for clean excerpt
-        const clean = t.content.replace(/[#*`_]/g, '').trim();
-        const firstSentence = clean.split('\n')[0] || clean;
-        list.push({
-          id: `gemini-${t.id || i}`,
-          label: `Gemini Inquiry #${i + 1}`,
-          text: firstSentence.length > 280 ? firstSentence.slice(0, 277) + '...' : firstSentence,
-          source: 'gemini',
-        });
-      });
-
-    return list;
-  }, [entry]);
-
-  // Initial text population
+  // Initial text population: always select a naturally SHORT, curated 1-2 sentence excerpt (max 280 chars) by default
   useEffect(() => {
     if (!isOpen) return;
 
     if (initialExcerpt && initialExcerpt.trim()) {
-      setSelectedText(initialExcerpt.trim());
+      const cleanContent = stripMarkdownAndMediaLinks(extractCleanReply(initialExcerpt));
+      // Curate a naturally short 1-2 sentence pull quote (max 220 chars) rather than dumping the full response
+      const pullQuote = generateCuratedPullQuote(cleanContent, 220);
+      const defaultQuote = truncateExcerptToLimit(pullQuote || cleanContent, 280);
+      setSelectedText(defaultQuote);
+      setSelectedExcerptId('target-pullquote');
     } else if (availableExcerpts.length > 0) {
-      setSelectedText(availableExcerpts[0].text);
+      setSelectedText(truncateExcerptToLimit(availableExcerpts[0].text, 280));
+      setSelectedExcerptId(availableExcerpts[0].id);
     } else if (entry.title && entry.title !== 'Untitled Reflection') {
-      setSelectedText(entry.title);
+      setSelectedText(truncateExcerptToLimit(entry.title, 280));
+      setSelectedExcerptId('entry-title');
     } else {
       setSelectedText('A quiet moment of reflection, discovering clarity within.');
+      setSelectedExcerptId('default-quote');
     }
   }, [isOpen, initialExcerpt, availableExcerpts, entry.title]);
 
@@ -133,7 +104,7 @@ export const ShareableCardModal: React.FC<ShareableCardModalProps> = ({
     canvas.width = width;
     canvas.height = height;
 
-    // Background: #FAF3E1
+    // Background: Warm Sand #FAF3E1
     ctx.fillStyle = '#FAF3E1';
     ctx.fillRect(0, 0, width, height);
 
@@ -148,9 +119,7 @@ export const ShareableCardModal: React.FC<ShareableCardModalProps> = ({
     ctx.strokeStyle = '#E6D7B8';
     ctx.strokeRect(innerMargin, innerMargin, width - innerMargin * 2, height - innerMargin * 2);
 
-    // Subtle decorative corner flourishes
-    const cornerSize = 24;
-    ctx.fillStyle = '#FA8112';
+    // Decorative corner diamond flourishes
     const drawDiamond = (cx: number, cy: number, size: number) => {
       ctx.beginPath();
       ctx.moveTo(cx, cy - size);
@@ -160,6 +129,8 @@ export const ShareableCardModal: React.FC<ShareableCardModalProps> = ({
       ctx.closePath();
       ctx.fill();
     };
+
+    ctx.fillStyle = '#FA8112';
     drawDiamond(innerMargin, innerMargin, 5);
     drawDiamond(width - innerMargin, innerMargin, 5);
     drawDiamond(innerMargin, height - innerMargin, 5);
@@ -178,45 +149,47 @@ export const ShareableCardModal: React.FC<ShareableCardModalProps> = ({
     ctx.font = 'bold 38px "Playfair Display", Georgia, serif';
     ctx.fillText('INNER SANCTUM', width / 2, emblemY + 28);
 
-    // Subtitle
+    // Subheader
     ctx.fillStyle = '#7C725F';
-    ctx.font = '500 18px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-    ctx.fillText('A REFLECTION RECORD', width / 2, emblemY + 76);
+    ctx.font = '500 16px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    ctx.letterSpacing = '3px';
+    ctx.fillText('DAILY MINDFUL REFLECTION', width / 2, emblemY + 82);
 
-    // Subtle Divider
+    // Divider Line
     ctx.strokeStyle = '#DFCBA0';
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(width / 2 - 80, emblemY + 112);
-    ctx.lineTo(width / 2 + 80, emblemY + 112);
+    ctx.moveTo(width / 2 - 160, emblemY + 116);
+    ctx.lineTo(width / 2 + 160, emblemY + 116);
     ctx.stroke();
 
-    // Mood Badge (if enabled)
     let currentY = emblemY + 140;
+
+    // Mood Badge Pill (if enabled)
     if (includeMood && entry.mood) {
       const moodInfo = MOOD_META[entry.mood] || { emoji: '🌿', label: 'Reflective' };
-      const moodText = `${moodInfo.emoji}  ${moodInfo.label.toUpperCase()}`;
+      const moodText = `${moodInfo.emoji} ${moodInfo.label.toUpperCase()}`;
 
       ctx.font = 'bold 18px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-      const textWidth = ctx.measureText(moodText).width;
-      const pillW = textWidth + 48;
-      const pillH = 38;
-      const pillX = (width - pillW) / 2;
+      const textMetrics = ctx.measureText(moodText);
+      const pillW = textMetrics.width + 44;
+      const pillH = 40;
+      const pillX = width / 2 - pillW / 2;
       const pillY = currentY;
 
-      // Pill background: #F5E7C6
+      // Pill Background
       ctx.fillStyle = '#F5E7C6';
       ctx.beginPath();
-      ctx.roundRect(pillX, pillY, pillW, pillH, 19);
+      ctx.roundRect(pillX, pillY, pillW, pillH, 20);
       ctx.fill();
 
-      // Pill border: #DFCBA0
+      // Pill Border
       ctx.strokeStyle = '#DFCBA0';
       ctx.lineWidth = 1.5;
       ctx.stroke();
 
-      // Pill text: #994500
-      ctx.fillStyle = '#994500';
+      // Pill Text
+      ctx.fillStyle = '#4A3B18';
       ctx.textBaseline = 'middle';
       ctx.fillText(moodText, width / 2, pillY + pillH / 2);
 
@@ -227,59 +200,120 @@ export const ShareableCardModal: React.FC<ShareableCardModalProps> = ({
 
     // Large Decorative Opening Quotation Mark
     ctx.fillStyle = '#E5D3AE';
-    ctx.font = 'italic 160px "Playfair Display", Georgia, serif';
+    ctx.font = 'italic 150px "Playfair Display", Georgia, serif';
     ctx.textBaseline = 'middle';
-    ctx.fillText('“', width / 2, currentY + 30);
+    ctx.fillText('“', width / 2, currentY + 28);
 
-    // Quote Body Text Box
-    const textToRender = selectedText.trim() || 'A quiet moment of reflection.';
-    const maxTextWidth = width - 260;
+    // Guaranteed clean, markdown-free, JSON-free, and bounded text
+    const rawClean = stripMarkdownAndMediaLinks(extractCleanReply(selectedText)).trim();
+    // Cap at 280 chars as a firm invariant
+    const textToRender = truncateExcerptToLimit(rawClean, 280) || 'A quiet moment of reflection, discovering clarity within.';
+    const maxTextWidth = width - 260; // 940px safe readable width
 
-    // Calculate font size dynamically based on length
-    let fontSize = 42;
-    if (textToRender.length > 250) {
-      fontSize = 30;
-    } else if (textToRender.length > 150) {
-      fontSize = 34;
-    } else if (textToRender.length > 80) {
-      fontSize = 38;
-    }
+    // Boundary calculations for the quote text block:
+    // Top boundary starts right below the decorative quotation mark
+    const availableAreaTop = currentY + 65;
+    // Bottom boundary stops well above the footer divider (footerY = height - 120)
+    const footerY = height - 120;
+    const availableAreaBottom = footerY - 45;
+    const maxAvailableHeight = Math.max(200, availableAreaBottom - availableAreaTop);
 
-    ctx.fillStyle = '#222222';
-    ctx.font = `italic ${fontSize}px "Playfair Display", Georgia, serif`;
-    ctx.textBaseline = 'top';
+    // Dynamic Font-Size Auto-Scaling:
+    // Candidate font sizes to test, ordered from generous display size down to compact
+    const candidateFontSizes = [44, 40, 36, 32, 28, 25, 22];
 
-    // Word wrap
-    const words = textToRender.split(/\s+/);
-    const lines: string[] = [];
-    let currentLine = '';
+    // Helper to calculate wrapped lines and total height for a given font size
+    const computeLayoutForFontSize = (fSize: number) => {
+      ctx.font = `italic ${fSize}px "Playfair Display", Georgia, serif`;
+      const paragraphs = textToRender.split(/\n+/);
+      const wrappedLines: string[] = [];
 
-    for (let i = 0; i < words.length; i++) {
-      const testLine = currentLine ? `${currentLine} ${words[i]}` : words[i];
-      const metrics = ctx.measureText(testLine);
-      if (metrics.width > maxTextWidth && currentLine) {
-        lines.push(currentLine);
-        currentLine = words[i];
-      } else {
-        currentLine = testLine;
+      paragraphs.forEach((para, pIdx) => {
+        const words = para.trim().split(/\s+/).filter(Boolean);
+        let cur = '';
+        for (let i = 0; i < words.length; i++) {
+          const test = cur ? `${cur} ${words[i]}` : words[i];
+          if (ctx.measureText(test).width > maxTextWidth && cur) {
+            wrappedLines.push(cur);
+            cur = words[i];
+          } else {
+            cur = test;
+          }
+        }
+        if (cur) wrappedLines.push(cur);
+        if (pIdx < paragraphs.length - 1 && wrappedLines.length < 7) {
+          wrappedLines.push(''); // blank spacing line between paragraphs
+        }
+      });
+
+      const lineHeight = Math.round(fSize * 1.45);
+      const totalHeight = wrappedLines.length * lineHeight;
+      return { lines: wrappedLines, lineHeight, totalHeight, fontSize: fSize };
+    };
+
+    // 1. Dynamic Auto-Scale: Test font sizes from largest to smallest; choose the first that fits comfortably
+    let chosenLayout = computeLayoutForFontSize(candidateFontSizes[candidateFontSizes.length - 1]);
+    for (const size of candidateFontSizes) {
+      const layout = computeLayoutForFontSize(size);
+      if (layout.totalHeight <= maxAvailableHeight) {
+        chosenLayout = layout;
+        break;
       }
     }
-    if (currentLine) lines.push(currentLine);
 
-    // Compute text vertical centering
-    const lineHeight = fontSize * 1.5;
-    const totalTextHeight = lines.length * lineHeight;
-    const availableAreaTop = currentY + 70;
-    const availableAreaBottom = height - 160;
-    const quoteStartY = Math.max(availableAreaTop, (availableAreaTop + availableAreaBottom - totalTextHeight) / 2);
+    // 2. Hard Truncation Fallback:
+    // If content would still exceed available height even at the smallest font size (22px),
+    // truncate at the last complete word before the maximum line count and append "..."
+    let finalLines = [...chosenLayout.lines];
+    const finalLineHeight = chosenLayout.lineHeight;
+    const finalFontSize = chosenLayout.fontSize;
 
-    lines.forEach((line, index) => {
-      ctx.fillText(line, width / 2, quoteStartY + index * lineHeight);
+    if (chosenLayout.totalHeight > maxAvailableHeight) {
+      const maxLines = Math.max(1, Math.floor(maxAvailableHeight / finalLineHeight));
+      if (finalLines.length > maxLines) {
+        finalLines = finalLines.slice(0, maxLines);
+        let lastLine = finalLines[maxLines - 1];
+
+        // If the cut-off line is blank from paragraph spacing, take previous line
+        if (!lastLine.trim() && maxLines > 1) {
+          finalLines.pop();
+          lastLine = finalLines[finalLines.length - 1];
+        }
+
+        ctx.font = `italic ${finalFontSize}px "Playfair Display", Georgia, serif`;
+        const ellipsis = '...';
+        const words = lastLine.trim().split(/\s+/);
+
+        while (words.length > 0 && ctx.measureText(words.join(' ') + ellipsis).width > maxTextWidth) {
+          words.pop();
+        }
+
+        const truncatedLine = words.length > 0
+          ? words.join(' ').replace(/[.,!?;:\s]+$/, '') + ellipsis
+          : ellipsis;
+
+        finalLines[finalLines.length - 1] = truncatedLine;
+      }
+    }
+
+    // Vertically center the text within the available quote area
+    const actualTextHeight = finalLines.length * finalLineHeight;
+    const quoteStartY = Math.max(
+      availableAreaTop,
+      (availableAreaTop + availableAreaBottom - actualTextHeight) / 2
+    );
+
+    ctx.fillStyle = '#222222';
+    ctx.font = `italic ${finalFontSize}px "Playfair Display", Georgia, serif`;
+    ctx.textBaseline = 'top';
+
+    finalLines.forEach((line, index) => {
+      if (line) {
+        ctx.fillText(line, width / 2, quoteStartY + index * finalLineHeight);
+      }
     });
 
     // Bottom Footer Area
-    const footerY = height - 120;
-
     // Subtle bottom divider
     ctx.strokeStyle = '#DFCBA0';
     ctx.lineWidth = 1;
@@ -308,12 +342,7 @@ export const ShareableCardModal: React.FC<ShareableCardModalProps> = ({
       }
     }
 
-    ctx.fillText(footerLabel, width / 2, footerY + 6);
-
-    // Tiny privacy / authentic marker
-    ctx.fillStyle = '#A39985';
-    ctx.font = '400 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-    ctx.fillText('Client-Side Reflection Artifact', width / 2, footerY + 36);
+    ctx.fillText(footerLabel, width / 2, footerY + 8);
 
     setIsRendering(false);
   }, [isOpen, selectedText, aspectRatio, includeDate, includeMood, entry]);
@@ -359,7 +388,8 @@ export const ShareableCardModal: React.FC<ShareableCardModalProps> = ({
           }, 3000);
         } else {
           // Fallback: copy text quote
-          await navigator.clipboard.writeText(`"${selectedText}" — Inner Sanctum Reflection`);
+          const clean = stripMarkdownAndMediaLinks(extractCleanReply(selectedText));
+          await navigator.clipboard.writeText(`"${clean}" — Inner Sanctum Reflection`);
           setIsCopied(true);
           setCopyFeedback('Text quote copied to clipboard (browser does not support direct image copying)');
           setTimeout(() => {
@@ -371,7 +401,8 @@ export const ShareableCardModal: React.FC<ShareableCardModalProps> = ({
     } catch (err) {
       console.warn('Direct image clipboard copy failed, falling back to text:', err);
       try {
-        await navigator.clipboard.writeText(`"${selectedText}" — Inner Sanctum Reflection`);
+        const clean = stripMarkdownAndMediaLinks(extractCleanReply(selectedText));
+        await navigator.clipboard.writeText(`"${clean}" — Inner Sanctum Reflection`);
         setIsCopied(true);
         setCopyFeedback('Text quote copied to clipboard!');
         setTimeout(() => {
@@ -388,30 +419,33 @@ export const ShareableCardModal: React.FC<ShareableCardModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div
-      id="modal-shareable-reflection-card"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Shareable Reflection Card"
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200"
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
-      <div className="relative w-full max-w-4xl max-h-[92vh] flex flex-col rounded-3xl border-2 border-[#DFCBA0] bg-[#FAF3E1] text-[#222222] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-[#DFCBA0] bg-[#F5E7C6]/70 px-5 py-4">
+      <div 
+        className="w-full max-w-4xl max-h-[92vh] flex flex-col rounded-3xl border border-[#DFCBA0] bg-[#FAF3E1] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="modal-share-title"
+      >
+        {/* Modal Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[#DFCBA0] bg-[#F5E7C6]/60">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#FA8112] text-white shadow-xs">
-              <Share2 className="h-4 w-4" />
+            <div className="p-2 rounded-xl bg-[#FA8112]/10 text-[#FA8112]">
+              <Sparkles className="h-5 w-5" />
             </div>
             <div>
-              <h2 className="font-serif text-lg font-bold text-[#111111] leading-tight">
+              <h2 id="modal-share-title" className="text-base sm:text-lg font-serif font-bold text-[#111111]">
                 Shareable Reflection Card
               </h2>
-              <p className="text-xs text-[#5C5549] font-serif">
-                Create a private, editorial graphic artifact of your chosen insight
+              <p className="text-xs text-[#5C5549] font-sans">
+                Curate a short excerpt or quote to save and share gracefully
               </p>
             </div>
           </div>
-
           <button
             id="btn-close-share-modal"
             onClick={onClose}
@@ -424,42 +458,58 @@ export const ShareableCardModal: React.FC<ShareableCardModalProps> = ({
 
         {/* Modal Body */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left Column: Controls & Excerpt Selection */}
+          {/* Left Column: Excerpt Selection & Card Customization */}
           <div className="lg:col-span-6 flex flex-col space-y-4">
-            {/* Zero Leakage Privacy Guarantee Banner */}
-            <div className="rounded-2xl border border-[#DFCBA0] bg-[#F5E7C6]/50 p-3.5 text-xs text-[#5C5549] flex items-start gap-2.5">
+            {/* Privacy Guarantee Banner */}
+            <div className="rounded-2xl border border-[#DFCBA0] bg-[#F5E7C6]/50 p-3 text-xs text-[#5C5549] flex items-start gap-2.5">
               <ShieldCheck className="h-4 w-4 text-[#FA8112] shrink-0 mt-0.5" />
               <div className="leading-relaxed">
-                <strong className="text-[#111111]">100% Client-Side & Private:</strong> Generated on your local device canvas. Your identity, email, and unselected reflections are never included or sent anywhere.
+                <strong className="text-[#111111]">Private & Client-Side:</strong> Rendered directly on your device canvas. Your identity, email, and full journal remain 100% private.
               </div>
             </div>
 
-            {/* Excerpt Selector Pills */}
-            <div>
-              <label className="block text-xs font-serif font-bold text-[#111111] mb-2 flex items-center gap-1.5">
-                <Quote className="h-3.5 w-3.5 text-[#FA8112]" />
-                <span>Select Excerpt to Feature:</span>
-              </label>
+            {/* Selection Step: Curated Short Excerpts */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-serif font-bold text-[#111111] flex items-center gap-1.5">
+                  <Quote className="h-3.5 w-3.5 text-[#FA8112]" />
+                  <span>Choose Short Excerpt (1–2 Sentences):</span>
+                </label>
+                <span className="text-[11px] text-[#7C786A] font-sans">
+                  {availableExcerpts.length} option{availableExcerpts.length === 1 ? '' : 's'} available
+                </span>
+              </div>
 
               {availableExcerpts.length > 0 ? (
-                <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
+                <div className="max-h-48 overflow-y-auto space-y-2 pr-1 rounded-2xl border border-[#DFCBA0]/70 bg-[#FDFCF9]/80 p-2">
                   {availableExcerpts.map((excerpt) => {
-                    const isSelected = selectedText === excerpt.text;
+                    const isSelected = selectedExcerptId === excerpt.id || selectedText === excerpt.text;
                     return (
                       <button
                         key={excerpt.id}
-                        onClick={() => setSelectedText(excerpt.text)}
+                        type="button"
+                        onClick={() => {
+                          setSelectedExcerptId(excerpt.id);
+                          setSelectedText(truncateExcerptToLimit(excerpt.text, 280));
+                        }}
                         className={`w-full text-left p-2.5 rounded-xl border text-xs transition-all cursor-pointer ${
                           isSelected
-                            ? 'bg-[#FA8112]/10 border-[#FA8112] text-[#111111] font-medium shadow-2xs'
-                            : 'bg-[#FDFCF9] border-[#DFCBA0]/80 text-[#333333] hover:bg-[#F5E7C6]/40'
+                            ? 'bg-[#FA8112]/15 border-[#FA8112] text-[#111111] font-medium shadow-xs ring-1 ring-[#FA8112]/40'
+                            : 'bg-white border-[#DFCBA0]/80 text-[#333333] hover:bg-[#F5E7C6]/50'
                         }`}
                       >
-                        <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider mb-1 text-[#7C786A]">
-                          <span>{excerpt.label}</span>
-                          {isSelected && <span className="text-[#FA8112]">Selected</span>}
+                        <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider mb-1">
+                          <span className={excerpt.isRecommended ? 'text-[#FA8112] flex items-center gap-1' : 'text-[#7C786A]'}>
+                            {excerpt.isRecommended && <Sparkles className="h-3 w-3 inline" />}
+                            {excerpt.label}
+                          </span>
+                          {isSelected && (
+                            <span className="text-[#FA8112] text-[10px] font-semibold bg-[#FA8112]/10 px-1.5 py-0.5 rounded">
+                              Selected
+                            </span>
+                          )}
                         </div>
-                        <p className="line-clamp-2 italic font-serif leading-relaxed">
+                        <p className="italic font-serif text-[13px] leading-relaxed text-[#1A1A1A]">
                           "{excerpt.text}"
                         </p>
                       </button>
@@ -467,33 +517,54 @@ export const ShareableCardModal: React.FC<ShareableCardModalProps> = ({
                   })}
                 </div>
               ) : (
-                <p className="text-xs text-[#7C786A] italic">
-                  No previous turns recorded yet. Write your custom quote below.
-                </p>
+                <div className="p-3 rounded-xl border border-[#DFCBA0] bg-[#F5E7C6]/30 text-xs text-[#7C786A] italic">
+                  No conversation turns recorded yet. Type your custom quote below.
+                </div>
               )}
             </div>
 
-            {/* Editable Quote Textarea */}
-            <div>
-              <label className="block text-xs font-serif font-bold text-[#111111] mb-1.5">
-                Quote Text (Customize as desired):
-              </label>
+            {/* Editable Quote Textarea for Fine-Tuning */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-serif font-bold text-[#111111] flex items-center gap-1.5">
+                  <SlidersHorizontal className="h-3.5 w-3.5 text-[#5C5549]" />
+                  <span>Card Text (Customize or Refine):</span>
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <span className={`text-[11px] font-sans ${selectedText.length >= 270 ? 'text-[#FA8112] font-semibold' : 'text-[#7C786A]'}`}>
+                    {selectedText.length} / 280 characters
+                  </span>
+                  {selectedText.length >= 280 && (
+                    <span className="text-[10px] bg-[#FA8112]/15 text-[#994500] font-semibold px-1.5 py-0.5 rounded">
+                      Limit reached
+                    </span>
+                  )}
+                </div>
+              </div>
               <textarea
                 id="textarea-card-quote"
-                rows={4}
+                rows={3}
                 value={selectedText}
-                onChange={(e) => setSelectedText(e.target.value)}
-                maxLength={400}
-                placeholder="Type or refine your reflection quote..."
-                className="w-full rounded-xl border border-[#DFCBA0] bg-[#FFFFFF] p-3 text-xs sm:text-sm text-[#111111] font-serif placeholder-[#9C988B] focus:border-[#FA8112] focus:outline-none focus:ring-1 focus:ring-[#FA8112]"
+                onChange={(e) => {
+                  const val = e.target.value;
+                  // Hard limit at 280 chars
+                  if (val.length > 280) {
+                    setSelectedText(val.slice(0, 280));
+                  } else {
+                    setSelectedText(val);
+                  }
+                  setSelectedExcerptId('custom-text');
+                }}
+                maxLength={280}
+                placeholder="Type or customize your reflection quote..."
+                className="w-full rounded-xl border border-[#DFCBA0] bg-[#FFFFFF] p-3 text-xs sm:text-sm text-[#111111] font-serif placeholder-[#9C988B] focus:border-[#FA8112] focus:outline-none focus:ring-1 focus:ring-[#FA8112] leading-relaxed shadow-xs"
               />
-              <div className="flex justify-between text-[11px] text-[#7C786A] mt-1">
-                <span>{selectedText.length} / 400 characters</span>
-                <span>Keep brief for best visual elegance</span>
-              </div>
+              <p className="text-[11px] text-[#7C786A]">
+                Maximum 280 characters. Formatting and media links are automatically stripped, and font size auto-scales to fit the card boundaries cleanly.
+              </p>
             </div>
 
-            {/* Design & Privacy Options */}
+            {/* Design & Badge Options */}
             <div className="grid grid-cols-2 gap-3 pt-1">
               <div>
                 <label className="block text-xs font-serif font-semibold text-[#111111] mb-1.5">
@@ -525,7 +596,7 @@ export const ShareableCardModal: React.FC<ShareableCardModalProps> = ({
 
               <div>
                 <label className="block text-xs font-serif font-semibold text-[#111111] mb-1.5">
-                  Badge Options:
+                  Card Accents:
                 </label>
                 <div className="flex flex-col gap-1.5">
                   <label className="flex items-center gap-2 text-xs text-[#333333] cursor-pointer">
@@ -551,11 +622,11 @@ export const ShareableCardModal: React.FC<ShareableCardModalProps> = ({
             </div>
           </div>
 
-          {/* Right Column: Live Card Canvas Preview & Export */}
+          {/* Right Column: Live Card Canvas Preview & Export Actions */}
           <div className="lg:col-span-6 flex flex-col items-center justify-between space-y-4">
             <div className="w-full flex items-center justify-between text-xs text-[#5C5549] font-serif">
               <span className="font-semibold text-[#111111]">Card Preview:</span>
-              <span className="text-[11px] text-[#7C786A]">High-DPI Canvas Rendering</span>
+              <span className="text-[11px] text-[#7C786A]">High-DPI Clean Typography</span>
             </div>
 
             {/* Canvas Preview Container */}

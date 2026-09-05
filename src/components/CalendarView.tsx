@@ -22,6 +22,7 @@ import {
 import type { JournalEntry, ReflectionMode, MoodType, WeatherData, VisualDriverType } from '../types';
 import { LandingVideoBackground } from './LandingVideoBackground';
 import { extractErrorMessage } from '../utils/errors';
+import { fetchCurrentWeather } from '../utils/weatherService';
 
 interface CalendarViewProps {
   entries: JournalEntry[];
@@ -287,6 +288,19 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [deletingDateKey, setDeletingDateKey] = useState<string | null>(null);
 
+  const deletingEntry = useMemo(() => {
+    if (!deletingDateKey) return null;
+    return (
+      entries.find((e) => e.id === deletingDateKey || e.date === deletingDateKey) || null
+    );
+  }, [entries, deletingDateKey]);
+
+  const deletingDateDisplay = useMemo(() => {
+    if (!deletingDateKey) return '';
+    if (deletingEntry?.date) return deletingEntry.date;
+    return deletingDateKey.includes('T') ? deletingDateKey.split('T')[0] : deletingDateKey;
+  }, [deletingDateKey, deletingEntry]);
+
   // Weather and Mood Ambiance States (with prop overrides)
   const [weatherDataInternal, setWeatherDataInternal] = useState<WeatherData | null>(null);
   const weatherData = propWeatherData !== undefined ? propWeatherData : weatherDataInternal;
@@ -295,12 +309,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   const detectedMood = propDetectedMood || detectedMoodInternal;
 
   const [isClassifyingMood, setIsClassifyingMood] = useState(false);
-
-  // Day of month alternating rule: Odd days = Mood, Even days = Weather
-  const dayOfMonth = useMemo(() => new Date().getDate(), []);
-  const initialDriver: VisualDriverType = useMemo(() => (dayOfMonth % 2 !== 0 ? 'mood' : 'weather'), [dayOfMonth]);
-  const [activeDriverInternal, setActiveDriverInternal] = useState<VisualDriverType>(initialDriver);
-  const activeDriver = propActiveDriver || activeDriverInternal;
 
   const todayStr = useMemo(() => formatDateKey(new Date()), []);
 
@@ -444,16 +452,15 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     return entryMap.get(todayStr) || null;
   }, [entryMap, todayStr]);
 
-  // Fetch today's weather securely via server proxy
+  // Fetch today's weather securely via server proxy with location awareness
   useEffect(() => {
     if (propWeatherData !== undefined) return;
     let isMounted = true;
     async function loadWeather() {
       try {
-        const res = await fetch('/api/weather');
-        if (res.ok) {
-          const data: WeatherData = await res.json();
-          if (isMounted) setWeatherDataInternal(data);
+        const data = await fetchCurrentWeather();
+        if (isMounted && data) {
+          setWeatherDataInternal(data);
         }
       } catch (err) {
         console.warn('Weather fetch fallback triggered:', err);
@@ -843,7 +850,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                 {todayEntry && (
                   <button
                     id="btn-delete-today-reflection"
-                    onClick={() => setDeletingDateKey(todayStr)}
+                    onClick={() => {
+                      const todayKey = todayEntry.id || todayEntry.date || todayStr;
+                      setDeletingDateKey(todayKey);
+                    }}
                     className="inline-flex items-center gap-1.5 rounded-xl border border-[#DFCBA0] bg-[#FAF3E1] hover:bg-[#FDF2F2] hover:text-[#9E3636] hover:border-[#F5CACA] px-3.5 py-2.5 text-xs font-serif font-semibold text-[#5C5549] transition-all cursor-pointer shadow-2xs"
                     title="Move today's reflection to Recently Deleted (15-day recovery)"
                   >
@@ -979,7 +989,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                               id={`btn-delete-cell-${cell.dateStr}`}
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setDeletingDateKey(cell.dateStr);
+                                const targetKey = cell.entry?.id || cell.entry?.date || cell.dateStr;
+                                setDeletingDateKey(targetKey);
                               }}
                               className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-0.5 text-[#5C5549] hover:text-[#9E3636] hover:bg-[#FDF2F2] rounded transition-all cursor-pointer"
                               title="Move reflection to Recently Deleted (15-day recovery)"
@@ -1204,7 +1215,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                   Move Reflection to Trash?
                 </h3>
                 <p className="text-xs text-[#5C5549] font-serif">
-                  Date: <span className="font-semibold text-[#222222]">{deletingDateKey}</span>
+                  Date: <span className="font-semibold text-[#222222]">{deletingDateDisplay}</span>
                 </p>
               </div>
             </div>

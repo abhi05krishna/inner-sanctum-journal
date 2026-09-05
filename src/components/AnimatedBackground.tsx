@@ -23,83 +23,117 @@ export const AnimatedBackground: React.FC<AnimatedBackgroundProps> = ({
 }) => {
   // Determine effective theme configuration
   const themeConfig = useMemo(() => {
-    const isWeather = driver === 'weather' && weather;
+    // 1. Weather-driven visual ambiance (strictly isolated from mood)
+    if (driver === 'weather') {
+      if (weather) {
+        const cond = weather.condition;
+        const isDay = weather.isDay;
+        const temp = weather.temperatureC;
+        const customLabel = weather.label;
 
-    if (isWeather && weather) {
-      const cond = weather.condition;
-      switch (cond) {
-        case 'rain':
-        case 'drizzle':
-          return {
-            id: 'weather-rain',
-            name: `Rainy Ambiance (${weather.temperatureC}°C)`,
-            icon: '🌧️',
-            bgGradient: 'from-[#0F2027] via-[#203A43] to-[#2C5364]',
-            orb1: 'bg-[#38BDF8]/90',
-            orb2: 'bg-[#0284C7]/85',
-            orb3: 'bg-[#06B6D4]/80',
-            orb4: 'bg-[#60A5FA]/85',
-            effect: 'rain',
-            accent: '#0284C7',
-          };
-        case 'clouds':
-        case 'fog':
-          return {
-            id: 'weather-clouds',
-            name: `Atmospheric Overcast (${weather.temperatureC}°C)`,
-            icon: '⛅',
-            bgGradient: 'from-[#475569] via-[#334155] to-[#1E293B]',
-            orb1: 'bg-[#94A3B8]/85',
-            orb2: 'bg-[#64748B]/90',
-            orb3: 'bg-[#38BDF8]/70',
-            orb4: 'bg-[#CBD5E1]/80',
-            effect: 'clouds',
-            accent: '#64748B',
-          };
-        case 'snow':
-          return {
-            id: 'weather-snow',
-            name: `Crisp Winter Snow (${weather.temperatureC}°C)`,
-            icon: '❄️',
-            bgGradient: 'from-[#0284C7] via-[#0369A1] to-[#0C4A6E]',
-            orb1: 'bg-[#7DD3FC]/90',
-            orb2: 'bg-[#E0F2FE]/95',
-            orb3: 'bg-[#38BDF8]/85',
-            orb4: 'bg-[#BAE6FD]/90',
-            effect: 'snow',
-            accent: '#38BDF8',
-          };
-        case 'thunderstorm':
-          return {
-            id: 'weather-thunder',
-            name: `Atmospheric Storm (${weather.temperatureC}°C)`,
-            icon: '⛈️',
-            bgGradient: 'from-[#090A0F] via-[#1E1B4B] to-[#312E81]',
-            orb1: 'bg-[#6366F1]/90',
-            orb2: 'bg-[#F59E0B]/85',
-            orb3: 'bg-[#3B82F6]/90',
-            orb4: 'bg-[#818CF8]/85',
-            effect: 'storm',
-            accent: '#EAB308',
-          };
-        case 'clear':
-        default:
-          return {
-            id: 'weather-clear',
-            name: `Sunlit Horizon (${weather.temperatureC}°C)`,
-            icon: '☀️',
-            bgGradient: 'from-[#F59E0B] via-[#EA580C] to-[#C2410C]',
-            orb1: 'bg-[#FBBF24]/95',
-            orb2: 'bg-[#F97316]/90',
-            orb3: 'bg-[#EF4444]/80',
-            orb4: 'bg-[#FDE047]/90',
-            effect: 'sunlight',
-            accent: '#D97706',
-          };
+        switch (cond) {
+          case 'rain':
+          case 'drizzle':
+            return {
+              id: 'weather-rain',
+              name: `${customLabel || 'Rainy Ambiance'} (${temp}°C)`,
+              icon: '🌧️',
+              bgGradient: 'from-[#0F2027] via-[#203A43] to-[#2C5364]',
+              orb1: 'bg-[#38BDF8]/90',
+              orb2: 'bg-[#0284C7]/85',
+              orb3: 'bg-[#06B6D4]/80',
+              orb4: 'bg-[#60A5FA]/85',
+              effect: 'rain',
+              accent: '#0284C7',
+            };
+          case 'clouds':
+          case 'fog':
+            return {
+              id: 'weather-clouds',
+              name: `${customLabel || 'Atmospheric Overcast'} (${temp}°C)`,
+              icon: isDay ? '⛅' : '☁️',
+              bgGradient: 'from-[#475569] via-[#334155] to-[#1E293B]',
+              orb1: 'bg-[#94A3B8]/85',
+              orb2: 'bg-[#64748B]/90',
+              orb3: 'bg-[#38BDF8]/70',
+              orb4: 'bg-[#CBD5E1]/80',
+              effect: 'clouds',
+              accent: '#64748B',
+            };
+          case 'snow':
+            return {
+              id: 'weather-snow',
+              name: `${customLabel || 'Crisp Winter Snow'} (${temp}°C)`,
+              icon: '❄️',
+              bgGradient: 'from-[#0284C7] via-[#0369A1] to-[#0C4A6E]',
+              orb1: 'bg-[#7DD3FC]/90',
+              orb2: 'bg-[#E0F2FE]/95',
+              orb3: 'bg-[#38BDF8]/85',
+              orb4: 'bg-[#BAE6FD]/90',
+              effect: 'snow',
+              accent: '#38BDF8',
+            };
+          case 'thunderstorm':
+            return {
+              id: 'weather-thunder',
+              name: `${customLabel || 'Atmospheric Storm'} (${temp}°C)`,
+              icon: '⛈️',
+              bgGradient: 'from-[#090A0F] via-[#1E1B4B] to-[#312E81]',
+              orb1: 'bg-[#6366F1]/90',
+              orb2: 'bg-[#F59E0B]/85',
+              orb3: 'bg-[#3B82F6]/90',
+              orb4: 'bg-[#818CF8]/85',
+              effect: 'storm',
+              accent: '#EAB308',
+            };
+          case 'clear':
+          default:
+            if (!isDay) {
+              return {
+                id: 'weather-clear-night',
+                name: `${customLabel || 'Clear Starlit Night'} (${temp}°C)`,
+                icon: '🌙',
+                bgGradient: 'from-[#0B0F19] via-[#111827] to-[#1E1B4B]',
+                orb1: 'bg-[#312E81]/80',
+                orb2: 'bg-[#1E1B4B]/90',
+                orb3: 'bg-[#38BDF8]/50',
+                orb4: 'bg-[#6366F1]/60',
+                effect: 'starlight',
+                accent: '#38BDF8',
+              };
+            }
+            return {
+              id: 'weather-clear',
+              name: `${customLabel || 'Sunlit Horizon'} (${temp}°C)`,
+              icon: '☀️',
+              bgGradient: 'from-[#F59E0B] via-[#EA580C] to-[#C2410C]',
+              orb1: 'bg-[#FBBF24]/95',
+              orb2: 'bg-[#F97316]/90',
+              orb3: 'bg-[#EF4444]/80',
+              orb4: 'bg-[#FDE047]/90',
+              effect: 'sunlight',
+              accent: '#D97706',
+            };
+        }
       }
+
+      // Explicit neutral fallback when weather data is unavailable or failing
+      // Never fall back to mood when weather mode is active!
+      return {
+        id: 'weather-neutral',
+        name: 'Atmospheric Skies (Offline Fallback)',
+        icon: '⛅',
+        bgGradient: 'from-[#334155] via-[#1E293B] to-[#0F172A]',
+        orb1: 'bg-[#64748B]/70',
+        orb2: 'bg-[#475569]/80',
+        orb3: 'bg-[#94A3B8]/60',
+        orb4: 'bg-[#334155]/70',
+        effect: 'neutral',
+        accent: '#94A3B8',
+      };
     }
 
-    // Mood-driven theme
+    // 2. Mood-driven visual ambiance (ONLY when driver is mood)
     const activeMood = mood || 'neutral';
     switch (activeMood) {
       case 'happy':
@@ -334,6 +368,31 @@ export const AnimatedBackground: React.FC<AnimatedBackgroundProps> = ({
           </div>
         )}
 
+        {/* 4.1. CLEAR NIGHT: STARLIGHT MOTES & MOON GLOW */}
+        {themeConfig.effect === 'starlight' && (
+          <div className="absolute inset-0 overflow-hidden pointer-events-none">
+            {/* Soft celestial moon aura */}
+            <div className="absolute -top-32 -right-32 w-[60rem] h-[60rem] rounded-full bg-radial from-sky-400/25 via-indigo-600/10 to-transparent animate-sun-rotate mix-blend-screen" />
+            
+            {/* Twinkling celestial starlight motes */}
+            {Array.from({ length: 42 }).map((_, i) => (
+              <div
+                key={`star-mote-${i}`}
+                className="absolute rounded-full bg-white shadow-[0_0_8px_#38BDF8]"
+                style={{
+                  width: `${2 + (i % 3) * 1.5}px`,
+                  height: `${2 + (i % 3) * 1.5}px`,
+                  left: `${(i * 2.4 + 3) % 96}%`,
+                  top: `${(i * 3.6 + 6) % 88}%`,
+                  animation: `pulse ${1.8 + (i % 4) * 0.7}s ease-in-out infinite`,
+                  animationDelay: `${(i * 0.18) % 3}s`,
+                  opacity: 0.35 + (i % 5) * 0.13,
+                }}
+              />
+            ))}
+          </div>
+        )}
+
         {/* 4.5. HAPPY: BABY PINK (#FF7E7E) WITH WHITE FLOWERS FALLING LIKE A GENTLE SNOWFALL */}
         {themeConfig.effect === 'happy' && (
           <div className="absolute inset-0 overflow-hidden pointer-events-none">
@@ -555,11 +614,20 @@ export const AnimatedBackground: React.FC<AnimatedBackgroundProps> = ({
           <div className="inline-flex items-center gap-2 rounded-full border border-[#E6E2D3]/90 bg-[#FDFCF9]/90 backdrop-blur-md px-3.5 py-1.5 shadow-sm text-xs font-serif">
             <span className="text-base">{themeConfig.icon}</span>
             <span className="text-[#1A1A1A] font-semibold">{themeConfig.name}</span>
+            {driver === 'weather' && weather?.city && (
+              <>
+                <span className="text-[#9C988B]">•</span>
+                <span className="inline-flex items-center gap-1 text-[#4A5D4E] font-medium text-[11px]" title={`Weather location: ${weather.city}`}>
+                  <span>📍</span>
+                  <span>{weather.city}</span>
+                </span>
+              </>
+            )}
             <span className="text-[#9C988B]">•</span>
             <span className="text-[#4A5D4E] font-medium text-[11px]">
               {driver === 'weather'
-                ? `Weather-Driven Ambiance (Even Day ${dayNumber ? `#${dayNumber}` : ''})`
-                : `Sentiment-Driven Ambiance (Odd Day ${dayNumber ? `#${dayNumber}` : ''})`}
+                ? 'Weather-Driven Ambiance'
+                : 'Sentiment-Driven Ambiance'}
             </span>
           </div>
 
