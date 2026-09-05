@@ -1728,12 +1728,38 @@ RAG CONTEXT GUIDELINES:
 // Spotify Integration Endpoints (OAuth, Status, Manual Search, Telemetry)
 // -------------------------------------------------------------
 
+const DEFAULT_PUBLISHED_REDIRECT_URI = 'https://your-own-moments-to-pen.ai.studio';
+
+/**
+ * Authoritative Spotify OAuth Redirect URI Resolver
+ * Resolves a fixed, deterministic redirect URI to prevent domain mismatch across reverse proxies,
+ * Cloud Run internal headers, and custom published domains.
+ */
+export function getAuthoritativeSpotifyRedirectUri(clientProvidedUri?: string): string {
+  // 1. Explicit SPOTIFY_REDIRECT_URI environment variable has top priority
+  if (process.env.SPOTIFY_REDIRECT_URI && process.env.SPOTIFY_REDIRECT_URI.trim()) {
+    return process.env.SPOTIFY_REDIRECT_URI.trim();
+  }
+
+  // 2. Localhost development override (e.g. http://localhost:3000/spotify-callback)
+  if (
+    clientProvidedUri &&
+    typeof clientProvidedUri === 'string' &&
+    (clientProvidedUri.includes('localhost') || clientProvidedUri.includes('127.0.0.1'))
+  ) {
+    return clientProvidedUri.trim();
+  }
+
+  // 3. Fallback to the registered published application URL
+  return DEFAULT_PUBLISHED_REDIRECT_URI;
+}
+
 /**
  * Spotify OAuth URL Generator
  */
 app.get('/api/spotify/auth-url', (req, res) => {
   const clientId = process.env.SPOTIFY_CLIENT_ID;
-  const redirectUri = (req.query.redirectUri as string) || `${process.env.APP_URL || 'http://localhost:3000'}/spotify-callback`;
+  const redirectUri = getAuthoritativeSpotifyRedirectUri(req.query.redirectUri as string);
 
   if (!clientId) {
     return res.json({
@@ -1758,6 +1784,7 @@ app.get('/api/spotify/auth-url', (req, res) => {
   return res.json({
     configured: true,
     authUrl,
+    redirectUri,
     state,
   });
 });
@@ -1767,15 +1794,17 @@ app.get('/api/spotify/auth-url', (req, res) => {
  */
 app.post('/api/spotify/exchange-token', async (req, res) => {
   try {
-    const { code, redirectUri, userId } = req.body || {};
+    const { code, redirectUri: clientRedirectUri, userId } = req.body || {};
     const clientId = process.env.SPOTIFY_CLIENT_ID;
     const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
 
-    if (!code || typeof code !== 'string' || !redirectUri || !userId) {
+    if (!code || typeof code !== 'string' || !userId) {
       return res.status(400).json({
-        error: 'Missing required parameters (code, redirectUri, userId).',
+        error: 'Missing required parameters (code, userId).',
       });
     }
+
+    const redirectUri = getAuthoritativeSpotifyRedirectUri(clientRedirectUri);
 
     if (code.length > INPUT_LIMITS.MAX_SPOTIFY_CODE_LENGTH) {
       return res.status(400).json({

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Loader2, CheckCircle2, AlertCircle, Music } from 'lucide-react';
+import { extractErrorMessage } from '../utils/errors';
 
 export const SpotifyCallbackHandler: React.FC = () => {
   const [status, setStatus] = useState<'exchanging' | 'success' | 'error'>('exchanging');
@@ -25,7 +26,13 @@ export const SpotifyCallbackHandler: React.FC = () => {
         }
 
         const storedUserId = sessionStorage.getItem('spotify_auth_userId') || 'spotify-authenticated-user';
-        const redirectUri = `${window.location.origin}/spotify-callback`;
+        const storedRedirectUri = sessionStorage.getItem('spotify_auth_redirectUri');
+        const redirectUri =
+          storedRedirectUri ||
+          (window.location.origin.includes('localhost')
+            ? `${window.location.origin}/spotify-callback`
+            : undefined);
+
         const res = await fetch('/api/spotify/exchange-token', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -38,7 +45,7 @@ export const SpotifyCallbackHandler: React.FC = () => {
 
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
-          throw new Error(data.error || 'Failed to exchange token with backend.');
+          throw new Error(extractErrorMessage(data, 'Failed to exchange token with backend.'));
         }
 
         setStatus('success');

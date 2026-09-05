@@ -40,8 +40,14 @@ import type { JournalEntry, UserProfile, AppView, VisualDriverType, WeatherData,
 import { Loader2, AlertCircle, RefreshCw } from 'lucide-react';
 
 export default function App() {
-  // If the current path is /spotify-callback, render OAuth callback handler immediately
-  if (typeof window !== 'undefined' && window.location.pathname === '/spotify-callback') {
+  // If the current path is /spotify-callback or has Spotify OAuth code/error query params, render OAuth callback handler immediately
+  const isSpotifyCallback =
+    typeof window !== 'undefined' &&
+    (window.location.pathname === '/spotify-callback' ||
+      (window.location.search.includes('code=') &&
+        (window.location.search.includes('state=') || window.location.search.includes('error='))));
+
+  if (isSpotifyCallback) {
     return <SpotifyCallbackHandler />;
   }
 

@@ -163,8 +163,10 @@ To enable mood-grounded music recommendations and playback previews:
 
 2. **Configure Redirect URIs**:
    - In your Spotify App settings, add the following authorized redirect URIs:
-     - Local development: `http://localhost:3000/api/spotify/callback` and `http://localhost:3000`
-     - Production: `https://<YOUR-CLOUD-RUN-SERVICE-URL>/api/spotify/callback` and `https://<YOUR-CLOUD-RUN-SERVICE-URL>`
+     - Published Production Domain: `https://your-own-moments-to-pen.ai.studio` (or `https://your-own-moments-to-pen.ai.studio/spotify-callback`)
+     - Local development: `http://localhost:3000/spotify-callback` and `http://localhost:3000`
+     - Optional Cloud Run service direct URL: `https://<YOUR-CLOUD-RUN-SERVICE-URL>/spotify-callback`
+   - Set the optional `SPOTIFY_REDIRECT_URI` environment variable if you wish to enforce an explicit fixed callback URI (defaults to `https://your-own-moments-to-pen.ai.studio`).
    - Save the configuration.
 
 3. **Required OAuth Scopes Used**:

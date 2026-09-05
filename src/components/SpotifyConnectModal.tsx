@@ -76,13 +76,18 @@ export const SpotifyConnectModal: React.FC<SpotifyConnectModalProps> = ({
   const handleConnect = async () => {
     try {
       setIsLoading(true);
-      const redirectUri = `${window.location.origin}/spotify-callback`;
-      const res = await fetch(`/api/spotify/auth-url?redirectUri=${encodeURIComponent(redirectUri)}`);
+      const queryParam = window.location.origin.includes('localhost')
+        ? `?redirectUri=${encodeURIComponent(`${window.location.origin}/spotify-callback`)}`
+        : '';
+      const res = await fetch(`/api/spotify/auth-url${queryParam}`);
       const data = await res.json();
 
       if (data.authUrl) {
         if (userId) {
           sessionStorage.setItem('spotify_auth_userId', userId);
+        }
+        if (data.redirectUri) {
+          sessionStorage.setItem('spotify_auth_redirectUri', data.redirectUri);
         }
         // Open Spotify auth in popup window
         const width = 500;
